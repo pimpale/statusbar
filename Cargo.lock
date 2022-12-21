@@ -1978,6 +1978,7 @@ dependencies = [
  "iced_wgpu",
  "iced_winit",
  "raw-window-handle 0.5.0",
+ "x11",
  "xcb",
  "xcb-util",
 ]
@@ -2597,6 +2598,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d129932f4644ac2396cb456385cbf9e63b5b30c6e8dc4820bdca4eb082037a5"
 dependencies = [
  "winapi",
+]
+
+[[package]]
+name = "x11"
+version = "2.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2638d5b9c17ac40575fb54bb461a4b1d2a8d1b4ffcc4ff237d254ec59ddeb82"
+dependencies = [
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]

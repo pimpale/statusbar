@@ -23,7 +23,13 @@ pub fn main() {
 
     let window = winit::window::Window::new(&event_loop).unwrap();
 
+    // create wm hints manager (works via ewmh on X11)
+    let mut wm_hints = wm_hints::WmHintsState::new(&window).unwrap();
+
     let physical_size = window.inner_size();
+    // stick the window to the top
+    wm_hints.dock_window(physical_size.height, wm_hints::Position::Top);
+
     let mut viewport = Viewport::with_physical_size(
         Size::new(physical_size.width, physical_size.height),
         window.scale_factor(),
