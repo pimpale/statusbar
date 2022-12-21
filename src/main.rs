@@ -4,10 +4,7 @@ mod wm_hints;
 use controls::Controls;
 
 use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
-use iced_winit::{
-    conversion, futures, program, renderer, winit, Clipboard, Color, Debug,
-    Size,
-};
+use iced_winit::{conversion, futures, program, renderer, winit, Clipboard, Color, Debug, Size};
 
 use winit::{
     dpi::PhysicalPosition,
@@ -21,14 +18,14 @@ pub fn main() {
     // Initialize winit
     let event_loop = EventLoop::new();
 
-    let window = winit::window::Window::new(&event_loop).unwrap();
+    let window = winit::window::WindowBuilder::new()
+        .build(&event_loop)
+        .unwrap();
 
     // create wm hints manager (works via ewmh on X11)
-    let mut wm_hints = wm_hints::WmHintsState::new(&window).unwrap();
+    let mut wm_hints = wm_hints::WmHintsState::new(&window, wm_hints::Position::Bottom).unwrap();
 
     let physical_size = window.inner_size();
-    // stick the window to the top
-    wm_hints.dock_window(physical_size.height, wm_hints::Position::Top);
 
     let mut viewport = Viewport::with_physical_size(
         Size::new(physical_size.width, physical_size.height),
@@ -39,20 +36,16 @@ pub fn main() {
     let mut clipboard = Clipboard::connect(&window);
 
     // Initialize wgpu
-    let backend =
-        wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::PRIMARY);
+    let backend = wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::PRIMARY);
 
     let instance = wgpu::Instance::new(backend);
     let surface = unsafe { instance.create_surface(&window) };
 
     let (format, (device, queue)) = futures::executor::block_on(async {
-        let adapter = wgpu::util::initialize_adapter_from_env_or_default(
-            &instance,
-            backend,
-            Some(&surface),
-        )
-        .await
-        .expect("No suitable GPU adapters found on the system!");
+        let adapter =
+            wgpu::util::initialize_adapter_from_env_or_default(&instance, backend, Some(&surface))
+                .await
+                .expect("No suitable GPU adapters found on the system!");
 
         let adapter_features = adapter.features();
 
@@ -100,15 +93,10 @@ pub fn main() {
 
     // Initialize iced
     let mut debug = Debug::new();
-    let mut renderer =
-        Renderer::new(Backend::new(&device, Settings::default(), format));
+    let mut renderer = Renderer::new(Backend::new(&device, Settings::default(), format));
 
-    let mut state = program::State::new(
-        controls,
-        viewport.logical_size(),
-        &mut renderer,
-        &mut debug,
-    );
+    let mut state =
+        program::State::new(controls, viewport.logical_size(), &mut renderer, &mut debug);
 
     // Run event loop
     event_loop.run(move |event, _, control_flow| {
@@ -125,6 +113,8 @@ pub fn main() {
                         modifiers = new_modifiers;
                     }
                     WindowEvent::Resized(_) => {
+                        // stick the window to the top
+                        wm_hints.update_bar_height(200).unwrap();
                         resized = true;
                     }
                     WindowEvent::CloseRequested => {
@@ -134,11 +124,9 @@ pub fn main() {
                 }
 
                 // Map window event to iced event
-                if let Some(event) = iced_winit::conversion::window_event(
-                    &event,
-                    window.scale_factor(),
-                    modifiers,
-                ) {
+                if let Some(event) =
+                    iced_winit::conversion::window_event(&event, window.scale_factor(), modifiers)
+                {
                     state.queue_event(event);
                 }
             }
@@ -148,13 +136,12 @@ pub fn main() {
                     // We update iced
                     let _ = state.update(
                         viewport.logical_size(),
-                        conversion::cursor_position(
-                            cursor_position,
-                            viewport.scale_factor(),
-                        ),
+                        conversion::cursor_position(cursor_position, viewport.scale_factor()),
                         &mut renderer,
                         &iced_wgpu::Theme::Dark,
-                        &renderer::Style { text_color: Color::WHITE },
+                        &renderer::Style {
+                            text_color: Color::WHITE,
+                        },
                         &mut clipboard,
                         &mut debug,
                     );
@@ -180,7 +167,7 @@ pub fn main() {
                             width: size.width,
                             height: size.height,
                             present_mode: wgpu::PresentMode::AutoVsync,
-                            alpha_mode: wgpu::CompositeAlphaMode::Auto
+                            alpha_mode: wgpu::CompositeAlphaMode::Auto,
                         },
                     );
 
@@ -189,13 +176,16 @@ pub fn main() {
 
                 match surface.get_current_texture() {
                     Ok(frame) => {
-                        let mut encoder = device.create_command_encoder(
-                            &wgpu::CommandEncoderDescriptor { label: None },
-                        );
+                        let mut encoder =
+                            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: None,
+                            });
 
-                        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                        let view = frame
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
 
-                                                // And then iced on top
+                        // And then iced on top
                         renderer.with_primitives(|backend, primitive| {
                             backend.present(
                                 &device,
@@ -214,15 +204,12 @@ pub fn main() {
                         frame.present();
 
                         // Update the mouse cursor
-                         window.set_cursor_icon(
-                             iced_winit::conversion::mouse_interaction(
-                                 state.mouse_interaction(),
-                             ),
-                         );
+                        window.set_cursor_icon(iced_winit::conversion::mouse_interaction(
+                            state.mouse_interaction(),
+                        ));
 
                         // And recall staging buffers
                         staging_belt.recall();
-
                     }
                     Err(error) => match error {
                         wgpu::SurfaceError::OutOfMemory => {
