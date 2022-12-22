@@ -1977,10 +1977,8 @@ dependencies = [
  "env_logger",
  "iced_wgpu",
  "iced_winit",
- "raw-window-handle 0.5.0",
- "x11",
+ "log",
  "xcb",
- "xcb-util",
 ]
 
 [[package]]
@@ -2601,16 +2599,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "x11"
-version = "2.20.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2638d5b9c17ac40575fb54bb461a4b1d2a8d1b4ffcc4ff237d254ec59ddeb82"
-dependencies = [
- "libc",
- "pkg-config",
-]
-
-[[package]]
 name = "x11-dl"
 version = "2.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2635,23 +2623,13 @@ dependencies = [
 
 [[package]]
 name = "xcb"
-version = "0.10.1"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "771e2b996df720cd1c6dd9ff90f62d91698fd3610cc078388d0564bdd6622a9c"
+checksum = "0faeb4d7e2d54fff4a0584f61297e86b106914af2029778de7b427f72564d6c5"
 dependencies = [
+ "bitflags",
  "libc",
- "log",
  "quick-xml",
-]
-
-[[package]]
-name = "xcb-util"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7c12d11589c9af0a90ca45e6177571be37d61c981c49c40e1bbd6c5867181e0"
-dependencies = [
- "libc",
- "xcb",
 ]
 
 [[package]]

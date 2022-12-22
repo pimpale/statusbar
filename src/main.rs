@@ -8,8 +8,10 @@ use iced_winit::{conversion, futures, program, renderer, winit, Clipboard, Color
 
 use winit::{
     dpi::PhysicalPosition,
+    dpi::PhysicalSize,
     event::{Event, ModifiersState, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
+    platform::unix::{WindowBuilderExtUnix, XWindowType},
 };
 
 pub fn main() {
@@ -19,13 +21,14 @@ pub fn main() {
     let event_loop = EventLoop::new();
 
     let window = winit::window::WindowBuilder::new()
+        .with_x11_window_type(vec![XWindowType::Dock])
+        .with_inner_size(PhysicalSize::new(1, 200))
         .build(&event_loop)
         .unwrap();
 
-    // create wm hints manager (works via ewmh on X11)
-    let mut wm_hints = wm_hints::WmHintsState::new(&window, wm_hints::Position::Bottom).unwrap();
-
     let physical_size = window.inner_size();
+
+    let wm_state_mgr = wm_hints::create_state_mgr(&window).unwrap();
 
     let mut viewport = Viewport::with_physical_size(
         Size::new(physical_size.width, physical_size.height),
@@ -113,9 +116,15 @@ pub fn main() {
                         modifiers = new_modifiers;
                     }
                     WindowEvent::Resized(_) => {
-                        // stick the window to the top
-                        wm_hints.update_bar_height(200).unwrap();
                         resized = true;
+                    }
+                    WindowEvent::CursorEntered{ .. } => {
+                        // grab keyboard focus on cursor enter
+                        wm_hints::grab_keyboard(&wm_state_mgr ).unwrap();
+                    }
+                    WindowEvent::CursorLeft{ .. } => {
+                        // release keyboard focus on cursor exit
+                        wm_hints::ungrab_keyboard(&wm_state_mgr ).unwrap();
                     }
                     WindowEvent::CloseRequested => {
                         *control_flow = ControlFlow::Exit;

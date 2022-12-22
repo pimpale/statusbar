@@ -37,6 +37,9 @@ impl Program for Controls {
             }
             Message::TextChanged(text) => {
                 self.text = text;
+                if self.text == "hi" {
+                    panic!();
+                }
             }
         }
 

@@ -7,7 +7,5 @@ edition = "2021"
 env_logger = "0.10.0"
 iced_wgpu = "0.7.0"
 iced_winit = "0.6.0"
-raw-window-handle = "0.5.0"
-x11 = {version="2.20.1", features=["xlib", "xlib_xcb"]}
-xcb = "0.10.0"
-xcb-util = { version = "0.4.0", features=["ewmh"]}
+log = "0.4.17"
+xcb = "1.2.0"
