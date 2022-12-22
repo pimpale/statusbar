@@ -1,7 +1,7 @@
-mod controls;
+mod todos;
 mod wm_hints;
 
-use controls::Controls;
+use todos::Todos;
 
 use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
 use iced_winit::{conversion, futures, program, renderer, winit, Clipboard, Color, Debug, Size};
@@ -92,7 +92,7 @@ pub fn main() {
     let mut staging_belt = wgpu::util::StagingBelt::new(5 * 1024);
 
     // Initialize scene and GUI controls
-    let controls = Controls::new();
+    let controls = Todos::new();
 
     // Initialize iced
     let mut debug = Debug::new();
