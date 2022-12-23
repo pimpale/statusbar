@@ -41,7 +41,9 @@ impl std::error::Error for WmHintsError {
     }
 }
 
-pub fn create_state_mgr(window: &dyn winit::platform::unix::WindowExtUnix) -> Result<WmHintsState, WmHintsError> {
+pub fn create_state_mgr(
+    window: &dyn winit::platform::unix::WindowExtUnix,
+) -> Result<WmHintsState, WmHintsError> {
     Ok(WmHintsState {
         screen_id: window
             .xlib_screen_id()
@@ -60,9 +62,7 @@ pub fn create_state_mgr(window: &dyn winit::platform::unix::WindowExtUnix) -> Re
     })
 }
 
-pub fn grab_keyboard(
-    data: &WmHintsState,
-) -> Result<(), WmHintsError> {
+pub fn grab_keyboard(data: &WmHintsState) -> Result<(), WmHintsError> {
     let cookie = data.conn.send_request(&x::GrabKeyboard {
         owner_events: false,
         grab_window: data.window,
@@ -82,9 +82,7 @@ pub fn grab_keyboard(
     }
 }
 
-pub fn ungrab_keyboard(
-    data: &WmHintsState,
-) -> Result<(), WmHintsError> {
+pub fn ungrab_keyboard(data: &WmHintsState) -> Result<(), WmHintsError> {
     data.conn
         .send_and_check_request(&x::UngrabKeyboard {
             time: x::CURRENT_TIME,

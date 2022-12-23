@@ -7,8 +7,8 @@ use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
 use iced_winit::{conversion, futures, program, renderer, winit, Clipboard, Color, Debug, Size};
 
 use winit::{
+    dpi::LogicalSize,
     dpi::PhysicalPosition,
-    dpi::PhysicalSize,
     event::{Event, ModifiersState, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::unix::{WindowBuilderExtUnix, XWindowType},
@@ -17,12 +17,15 @@ use winit::{
 pub fn main() {
     env_logger::init();
 
+    // initialize app state
+    let todos = Todos::new();
+
     // Initialize winit
     let event_loop = EventLoop::new();
 
     let window = winit::window::WindowBuilder::new()
         .with_x11_window_type(vec![XWindowType::Dock])
-        .with_inner_size(PhysicalSize::new(1, 200))
+        .with_inner_size(LogicalSize::new(1, todos.height()))
         .build(&event_loop)
         .unwrap();
 
@@ -91,15 +94,11 @@ pub fn main() {
     // Initialize staging belt
     let mut staging_belt = wgpu::util::StagingBelt::new(5 * 1024);
 
-    // Initialize scene and GUI controls
-    let controls = Todos::new();
-
     // Initialize iced
     let mut debug = Debug::new();
     let mut renderer = Renderer::new(Backend::new(&device, Settings::default(), format));
 
-    let mut state =
-        program::State::new(controls, viewport.logical_size(), &mut renderer, &mut debug);
+    let mut state = program::State::new(todos, viewport.logical_size(), &mut renderer, &mut debug);
 
     // Run event loop
     event_loop.run(move |event, _, control_flow| {
@@ -112,19 +111,19 @@ pub fn main() {
                     WindowEvent::CursorMoved { position, .. } => {
                         cursor_position = position;
                     }
+                    WindowEvent::CursorEntered { .. } => {
+                        // grab keyboard focus on cursor enter
+                        wm_hints::grab_keyboard(&wm_state_mgr).unwrap();
+                    }
+                    WindowEvent::CursorLeft { .. } => {
+                        // release keyboard focus on cursor exit
+                        wm_hints::ungrab_keyboard(&wm_state_mgr).unwrap();
+                    }
                     WindowEvent::ModifiersChanged(new_modifiers) => {
                         modifiers = new_modifiers;
                     }
                     WindowEvent::Resized(_) => {
                         resized = true;
-                    }
-                    WindowEvent::CursorEntered{ .. } => {
-                        // grab keyboard focus on cursor enter
-                        wm_hints::grab_keyboard(&wm_state_mgr ).unwrap();
-                    }
-                    WindowEvent::CursorLeft{ .. } => {
-                        // release keyboard focus on cursor exit
-                        wm_hints::ungrab_keyboard(&wm_state_mgr ).unwrap();
                     }
                     WindowEvent::CloseRequested => {
                         *control_flow = ControlFlow::Exit;
@@ -154,6 +153,10 @@ pub fn main() {
                         &mut clipboard,
                         &mut debug,
                     );
+
+                    // set the window size to to what was requested
+                    let program = state.program();
+                    window.set_inner_size(LogicalSize::new(1, program.height()));
 
                     // and request a redraw
                     window.request_redraw();

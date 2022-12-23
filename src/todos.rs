@@ -1,31 +1,47 @@
 use iced_winit::alignment::{self, Alignment};
-use iced_winit::theme;
+use iced_winit::{theme, Command, Length};
 use iced_winit::widget::{
     button, checkbox, column, container, row, scrollable, text, text_input, Text,
 };
-use iced_winit::{Color, Command, Length};
 use iced_winit::{Element, Program};
 
-use iced_wgpu::Renderer;
+use iced_wgpu::{Renderer, Color};
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 static INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
 
 #[derive(Debug)]
-pub enum Todos {
-    Loading,
-    Loaded(State),
+pub struct Todos {
+    expanded: bool,
+    state: State,
 }
 
-#[derive(Debug, Default)]
-pub struct State {
+#[derive(Debug)]
+pub enum State {
+    Loading,
+    Loaded(LoadedState),
+}
+
+#[derive(Debug)]
+pub struct LoadedState {
     input_value: String,
-    filter: Filter,
-    tasks: Vec<Task>,
+    tasks: VecDeque<Task>,
     dirty: bool,
     saving: bool,
+}
+
+impl Default for LoadedState {
+    fn default() -> Self {
+        LoadedState {
+            input_value: String::new(),
+            tasks: VecDeque::new(),
+            dirty: false,
+            saving: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -34,20 +50,24 @@ pub enum Message {
     Saved(Result<(), SaveError>),
     InputChanged(String),
     CreateTask,
-    FilterChanged(Filter),
     TaskMessage(usize, TaskMessage),
 }
 
 impl Todos {
     pub fn new() -> Todos {
-        Self::Loaded(State {
-            input_value: String::new(),
-            tasks: vec![],
-            filter: Filter::All,
-            dirty: false,
-            saving: false,
-        })
+        Todos {
+            expanded: false,
+            state: State::Loaded(LoadedState::default()),
+        }
     }
+
+    pub fn height(&self) -> u32 {
+        match self.expanded {
+            true => 200,
+            false => 50,
+        }
+    }
+
 }
 
 impl Program for Todos {
@@ -55,26 +75,26 @@ impl Program for Todos {
     type Renderer = Renderer;
 
     fn update(&mut self, message: Message) -> Command<Message> {
-        match self {
-            Todos::Loading => {
+        match &mut self.state {
+            State::Loading => {
                 match message {
                     Message::Loaded(Ok(state)) => {
-                        *self = Todos::Loaded(State {
+                        self.state = State::Loaded(LoadedState {
                             input_value: state.input_value,
-                            filter: state.filter,
-                            tasks: state.tasks,
-                            ..State::default()
+                            tasks: state.tasks.into(),
+                            dirty: false,
+                            saving: false,
                         });
                     }
                     Message::Loaded(Err(_)) => {
-                        *self = Todos::Loaded(State::default());
+                        self.state = State::Loaded(LoadedState::default());
                     }
                     _ => {}
                 }
 
                 text_input::focus(INPUT_ID.clone())
             }
-            Todos::Loaded(state) => {
+            State::Loaded(state) => {
                 let mut saved = false;
 
                 let command = match message {
@@ -85,14 +105,9 @@ impl Program for Todos {
                     }
                     Message::CreateTask => {
                         if !state.input_value.is_empty() {
-                            state.tasks.push(Task::new(state.input_value.clone()));
+                            state.tasks.push_back(Task::new(state.input_value.clone()));
                             state.input_value.clear();
                         }
-
-                        Command::none()
-                    }
-                    Message::FilterChanged(filter) => {
-                        state.filter = filter;
 
                         Command::none()
                     }
@@ -140,8 +155,7 @@ impl Program for Todos {
                     Command::perform(
                         SavedState {
                             input_value: state.input_value.clone(),
-                            filter: state.filter,
-                            tasks: state.tasks.clone(),
+                            tasks: state.tasks.clone().into(),
                         }
                         .save(),
                         Message::Saved,
@@ -156,36 +170,24 @@ impl Program for Todos {
     }
 
     fn view(&self) -> Element<Message, Renderer> {
-        match self {
-            Todos::Loading => loading_message(),
-            Todos::Loaded(State {
+        match &self.state {
+            State::Loading => loading_message(),
+            State::Loaded(LoadedState {
                 input_value,
-                filter,
                 tasks,
                 ..
             }) => {
-                let title = text("todos")
-                    .width(Length::Fill)
-                    .size(100)
-                    .style(Color::from([0.5, 0.5, 0.5]))
-                    .horizontal_alignment(alignment::Horizontal::Center);
-
                 let input =
-                    text_input("What needs to be done?", input_value, Message::InputChanged)
+                    text_input("What needs to be done?", &input_value, Message::InputChanged)
                         .id(INPUT_ID.clone())
-                        .padding(15)
-                        .size(30)
                         .on_submit(Message::CreateTask);
 
-                let controls = view_controls(tasks, *filter);
-                let filtered_tasks = tasks.iter().filter(|task| filter.matches(task));
 
-                let tasks: Element<_, Renderer> = if filtered_tasks.count() > 0 {
+                let tasks: Element<_, Renderer> = if tasks.len() > 0 {
                     column(
                         tasks
                             .iter()
                             .enumerate()
-                            .filter(|(_, task)| filter.matches(task))
                             .map(|(i, task)| {
                                 task.view(i)
                                     .map(move |message| Message::TaskMessage(i, message))
@@ -202,14 +204,9 @@ impl Program for Todos {
                     })
                 };
 
-                let content = column(vec![
-                    title.into(),
-                    input.into(),
-                    controls.into(),
-                    tasks.into(),
-                ])
-                .spacing(20)
-                .max_width(800);
+                let content = column(vec![input.into(), controls.into(), tasks.into()])
+                    .spacing(20)
+                    .max_width(800);
 
                 scrollable(
                     container(content)
@@ -330,65 +327,10 @@ impl Task {
     }
 }
 
-fn view_controls(tasks: &[Task], current_filter: Filter) -> Element<Message, Renderer> {
-    let tasks_left = tasks.iter().filter(|task| !task.completed).count();
-
-    let filter_button = |label, filter, current_filter| {
-        let label = text(label).size(16);
-
-        let button = button(label).style(if filter == current_filter {
-            theme::Button::Primary
-        } else {
-            theme::Button::Text
-        });
-
-        button.on_press(Message::FilterChanged(filter)).padding(8)
-    };
-
-    row(vec![
-        text(format!(
-            "{} {} left",
-            tasks_left,
-            if tasks_left == 1 { "task" } else { "tasks" }
-        ))
-        .width(Length::Fill)
-        .size(16)
-        .into(),
-        row(vec![
-            filter_button("All", Filter::All, current_filter).into(),
-            filter_button("Active", Filter::Active, current_filter).into(),
-            filter_button("Completed", Filter::Completed, current_filter).into(),
-        ])
-        .width(Length::Shrink)
-        .spacing(10)
-        .into(),
-    ])
-    .spacing(20)
-    .align_items(Alignment::Center)
-    .into()
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Filter {
-    All,
     Active,
     Completed,
-}
-
-impl Default for Filter {
-    fn default() -> Self {
-        Filter::All
-    }
-}
-
-impl Filter {
-    fn matches(&self, task: &Task) -> bool {
-        match self {
-            Filter::All => true,
-            Filter::Active => !task.completed,
-            Filter::Completed => task.completed,
-        }
-    }
 }
 
 fn loading_message<'a>() -> Element<'a, Message, Renderer> {
