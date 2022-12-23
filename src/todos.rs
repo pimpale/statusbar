@@ -379,7 +379,6 @@ fn delete_icon() -> Text<'static, Renderer> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedState {
     input_value: String,
-    filter: Filter,
     tasks: Vec<Task>,
 }
 
