@@ -89,7 +89,7 @@ pub fn main() {
         },
     );
 
-    let mut resized = false;
+    let mut need_to_resize_surface = false;
 
     // Initialize staging belt
     let mut staging_belt = wgpu::util::StagingBelt::new(5 * 1024);
@@ -122,8 +122,14 @@ pub fn main() {
                     WindowEvent::ModifiersChanged(new_modifiers) => {
                         modifiers = new_modifiers;
                     }
-                    WindowEvent::Resized(_) => {
-                        resized = true;
+                    WindowEvent::Resized(size) => {
+                        // change viewport
+                        viewport = Viewport::with_physical_size(
+                            Size::new(size.width, size.height),
+                            window.scale_factor(),
+                        );
+                        // in the next frame we'll have to resize the surface
+                        need_to_resize_surface = true;
                     }
                     WindowEvent::CloseRequested => {
                         *control_flow = ControlFlow::Exit;
@@ -163,13 +169,8 @@ pub fn main() {
                 }
             }
             Event::RedrawRequested(_) => {
-                if resized {
+                if need_to_resize_surface {
                     let size = window.inner_size();
-
-                    viewport = Viewport::with_physical_size(
-                        Size::new(size.width, size.height),
-                        window.scale_factor(),
-                    );
 
                     surface.configure(
                         &device,
@@ -183,7 +184,7 @@ pub fn main() {
                         },
                     );
 
-                    resized = false;
+                    need_to_resize_surface = false;
                 }
 
                 match surface.get_current_texture() {

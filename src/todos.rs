@@ -1,11 +1,11 @@
 use iced_winit::alignment::{self, Alignment};
-use iced_winit::{theme, Command, Length};
 use iced_winit::widget::{
     button, checkbox, column, container, row, scrollable, text, text_input, Text,
 };
+use iced_winit::{theme, Command, Length};
 use iced_winit::{Element, Program};
 
-use iced_wgpu::{Renderer, Color};
+use iced_wgpu::{Color, Renderer};
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,8 @@ pub enum Message {
     Saved(Result<(), SaveError>),
     InputChanged(String),
     CreateTask,
+    Expand,
+    Collapse,
     TaskMessage(usize, TaskMessage),
 }
 
@@ -57,6 +59,7 @@ impl Todos {
     pub fn new() -> Todos {
         Todos {
             expanded: false,
+            // state: State::Loading,
             state: State::Loaded(LoadedState::default()),
         }
     }
@@ -67,7 +70,6 @@ impl Todos {
             false => 50,
         }
     }
-
 }
 
 impl Program for Todos {
@@ -98,6 +100,14 @@ impl Program for Todos {
                 let mut saved = false;
 
                 let command = match message {
+                    Message::Collapse => {
+                        self.expanded = false;
+                        Command::none()
+                    }
+                    Message::Expand => {
+                        self.expanded = true;
+                        Command::none()
+                    }
                     Message::InputChanged(value) => {
                         state.input_value = value;
 
@@ -105,7 +115,7 @@ impl Program for Todos {
                     }
                     Message::CreateTask => {
                         if !state.input_value.is_empty() {
-                            state.tasks.push_back(Task::new(state.input_value.clone()));
+                            state.tasks.push_front(Task::new(state.input_value.clone()));
                             state.input_value.clear();
                         }
 
@@ -170,18 +180,30 @@ impl Program for Todos {
     }
 
     fn view(&self) -> Element<Message, Renderer> {
-        match &self.state {
-            State::Loading => loading_message(),
-            State::Loaded(LoadedState {
-                input_value,
-                tasks,
+        match self {
+            Self {
+                state: State::Loading,
                 ..
-            }) => {
-                let input =
-                    text_input("What needs to be done?", &input_value, Message::InputChanged)
-                        .id(INPUT_ID.clone())
-                        .on_submit(Message::CreateTask);
-
+            } => container(text("Loading...").size(30))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x()
+                .center_y()
+                .into(),
+            Self {
+                state:
+                    State::Loaded(LoadedState {
+                        input_value, tasks, ..
+                    }),
+                expanded: true,
+            } => {
+                let input = text_input(
+                    "What needs to be done?",
+                    &input_value,
+                    Message::InputChanged,
+                )
+                .id(INPUT_ID.clone())
+                .on_submit(Message::CreateTask);
 
                 let tasks: Element<_, Renderer> = if tasks.len() > 0 {
                     column(
@@ -197,25 +219,44 @@ impl Program for Todos {
                     .spacing(10)
                     .into()
                 } else {
-                    empty_message(match filter {
-                        Filter::All => "You have not created a task yet...",
-                        Filter::Active => "All your tasks are done! :D",
-                        Filter::Completed => "You have not completed a task yet...",
-                    })
+                    text("You have not created a task yet...").size(25).into()
                 };
 
-                let content = column(vec![input.into(), controls.into(), tasks.into()])
-                    .spacing(20)
-                    .max_width(800);
-
-                scrollable(
-                    container(content)
-                        .width(Length::Fill)
-                        .padding(40)
-                        .center_x(),
-                )
+                row(vec![
+                    button("Collapse").on_press(Message::Collapse).into(),
+                    column(vec![input.into(), scrollable(tasks).into()])
+                        .spacing(10)
+                        .width(Length::Shrink)
+                        .into(),
+                ])
+                .spacing(10)
+                .padding(10)
                 .into()
             }
+            Self {
+                state: State::Loaded(LoadedState { tasks, .. }),
+                expanded: false,
+            } => match tasks.front() {
+                None => container(button("Click to Add Task").on_press(Message::Expand))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(alignment::Horizontal::Left)
+                    .align_y(alignment::Vertical::Top)
+                    .padding(10)
+                    .into(),
+                Some(task) => row(vec![
+                    button("Expand").on_press(Message::Expand).into(),
+                    button(text(&task.description))
+                        .height(Length::Fill)
+                        .style(
+                        .into(),
+                ])
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .spacing(10)
+                .padding(10)
+                .into(),
+            },
         }
     }
 }
@@ -313,7 +354,7 @@ impl Task {
 
                 row(vec![
                     text_input.into(),
-                    button(row(vec![delete_icon().into(), "Delete".into()]).spacing(10))
+                    button("Delete")
                         .on_press(TaskMessage::Delete)
                         .padding(10)
                         .style(theme::Button::Destructive)
@@ -333,32 +374,6 @@ pub enum Filter {
     Completed,
 }
 
-fn loading_message<'a>() -> Element<'a, Message, Renderer> {
-    container(
-        text("Loading...")
-            .horizontal_alignment(alignment::Horizontal::Center)
-            .size(50),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .center_y()
-    .into()
-}
-
-fn empty_message(message: &str) -> Element<'_, Message, Renderer> {
-    container(
-        text(message)
-            .width(Length::Fill)
-            .size(25)
-            .horizontal_alignment(alignment::Horizontal::Center)
-            .style(Color::from([0.7, 0.7, 0.7])),
-    )
-    .width(Length::Fill)
-    .height(Length::Units(200))
-    .center_y()
-    .into()
-}
-
 fn icon(unicode: char) -> Text<'static, Renderer> {
     text(unicode.to_string())
         //.font(ICONS)
@@ -367,13 +382,6 @@ fn icon(unicode: char) -> Text<'static, Renderer> {
         .size(20)
 }
 
-fn edit_icon() -> Text<'static, Renderer> {
-    icon('\u{F303}')
-}
-
-fn delete_icon() -> Text<'static, Renderer> {
-    icon('\u{F1F8}')
-}
 
 // Persistence
 #[derive(Debug, Clone, Serialize, Deserialize)]
