@@ -1,10 +1,14 @@
 mod todos;
 mod wm_hints;
+mod program_runner;
 
 use todos::Todos;
 
 use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
-use iced_winit::{conversion, futures, program, renderer, winit, Clipboard, Color, Debug, Size};
+use iced_winit::{
+     conversion, futures, program, renderer, winit, Clipboard, Color,
+    Debug, Size,
+};
 
 use winit::{
     dpi::LogicalSize,
@@ -28,6 +32,8 @@ pub fn main() {
         .with_inner_size(LogicalSize::new(1, todos.height()))
         .build(&event_loop)
         .unwrap();
+
+    let mut clipboard = Clipboard::connect(&window);
 
     let physical_size = window.inner_size();
 
@@ -148,7 +154,7 @@ pub fn main() {
                 // If there are events pending
                 if !state.is_queue_empty() {
                     // We update iced
-                    let _ = state.update(
+                    let command = state.update(
                         viewport.logical_size(),
                         conversion::cursor_position(cursor_position, viewport.scale_factor()),
                         &mut renderer,

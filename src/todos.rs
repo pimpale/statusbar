@@ -37,8 +37,6 @@ pub struct LoadedState {
     active_index: Option<usize>,
     live_tasks: VecDeque<String>,
     finished_tasks: Vec<(String, TaskCompletionKind)>,
-    dirty: bool,
-    saving: bool,
 }
 
 impl Default for LoadedState {
@@ -48,18 +46,12 @@ impl Default for LoadedState {
             active_index: None,
             live_tasks: VecDeque::new(),
             finished_tasks: Vec::new(),
-            dirty: false,
-            saving: false,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    // load and save
-    Save,
-    Loaded(Result<SavedState, LoadError>),
-    Saved(Result<(), SaveError>),
     // change dock
     ExpandDock,
     CollapseDock,
@@ -98,32 +90,13 @@ impl Program for Todos {
     type Message = Message;
     type Renderer = Renderer;
 
+    // the cringe runner doesn't actually run crap - check main for what actually does happen
+    // "cross platform" when anyone needs to hook in platform-specifc stuff for each plaform is pain
     fn update(&mut self, message: Message) -> Command<Message> {
         match &mut self.state {
-            State::Loading => {
-                match message {
-                    Message::Loaded(Ok(state)) => {
-                        self.state = State::Loaded(LoadedState {
-                            input_value: state.input_value,
-                            active_index: None,
-                            finished_tasks: state.finished_tasks,
-                            live_tasks: state.live_tasks.into(),
-                            dirty: false,
-                            saving: false,
-                        });
-                    }
-                    Message::Loaded(Err(_)) => {
-                        self.state = State::Loaded(LoadedState::default());
-                    }
-                    _ => {}
-                }
-
-                text_input::focus(INPUT_ID.clone())
-            }
+            State::Loading => Command::none(),
             State::Loaded(state) => {
-                let mut saved = false;
-
-                let command = match message {
+                match message {
                     Message::CollapseDock => {
                         self.expanded = false;
                         state.input_value = String::new();
@@ -181,40 +154,13 @@ impl Program for Todos {
                     }
                     Message::SetActive(a) => {
                         state.active_index = a;
-                        Command::none()
-                    }
-                    Message::Saved(_) => {
-                        state.saving = false;
-                        saved = true;
-
-                        Command::none()
-                    }
-                    Message::Save => todo!(),
-                    Message::Loaded(_) => todo!(),
-                };
-
-                if !saved {
-                    state.dirty = true;
-                }
-
-                let save = if state.dirty && !state.saving {
-                    state.dirty = false;
-                    state.saving = true;
-
-                    Command::perform(
-                        SavedState {
-                            input_value: state.input_value.clone(),
-                            finished_tasks: state.finished_tasks.clone(),
-                            live_tasks: state.live_tasks.clone().into(),
+                        if let Some(i) = a {
+                            text_input::focus(ACTIVE_INPUT_ID.clone())
+                        } else {
+                            Command::none()
                         }
-                        .save(),
-                        Message::Saved,
-                    )
-                } else {
-                    Command::none()
-                };
-
-                Command::batch(vec![command, save])
+                    }
+                }
             }
         }
     }
@@ -357,87 +303,5 @@ impl Program for Todos {
                 .into(),
             },
         }
-    }
-}
-
-// Persistence
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SavedState {
-    input_value: String,
-    live_tasks: Vec<String>,
-    finished_tasks: Vec<(String, TaskCompletionKind)>,
-}
-
-#[derive(Debug, Clone)]
-pub enum LoadError {
-    File,
-    Format,
-}
-
-#[derive(Debug, Clone)]
-pub enum SaveError {
-    File,
-    Write,
-    Format,
-}
-
-impl SavedState {
-    fn path() -> std::path::PathBuf {
-        let mut path = if let Some(project_dirs) =
-            directories_next::ProjectDirs::from("rs", "Iced", "Todos")
-        {
-            project_dirs.data_dir().into()
-        } else {
-            std::env::current_dir().unwrap_or_default()
-        };
-
-        path.push("todos.json");
-
-        path
-    }
-
-    async fn load() -> Result<SavedState, LoadError> {
-        use async_std::prelude::*;
-
-        let mut contents = String::new();
-
-        let mut file = async_std::fs::File::open(Self::path())
-            .await
-            .map_err(|_| LoadError::File)?;
-
-        file.read_to_string(&mut contents)
-            .await
-            .map_err(|_| LoadError::File)?;
-
-        serde_json::from_str(&contents).map_err(|_| LoadError::Format)
-    }
-
-    async fn save(self) -> Result<(), SaveError> {
-        use async_std::prelude::*;
-
-        let json = serde_json::to_string_pretty(&self).map_err(|_| SaveError::Format)?;
-
-        let path = Self::path();
-
-        if let Some(dir) = path.parent() {
-            async_std::fs::create_dir_all(dir)
-                .await
-                .map_err(|_| SaveError::File)?;
-        }
-
-        {
-            let mut file = async_std::fs::File::create(path)
-                .await
-                .map_err(|_| SaveError::File)?;
-
-            file.write_all(json.as_bytes())
-                .await
-                .map_err(|_| SaveError::Write)?;
-        }
-
-        // This is a simple way to save at most once every couple seconds
-        async_std::task::sleep(std::time::Duration::from_secs(2)).await;
-
-        Ok(())
     }
 }
