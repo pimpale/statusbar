@@ -2165,6 +2165,7 @@ name = "statusbar"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "iced_native",
  "iced_wgpu",
  "iced_winit",
  "log",

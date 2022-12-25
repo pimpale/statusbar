@@ -6,10 +6,11 @@ edition = "2021"
 [dependencies]
 env_logger = "0.10.0"
 iced_wgpu = {version="0.7.0",features = ["default_system_font"]}
-iced_winit = {version="0.6.0", features=["application"]}
+iced_winit = "0.6.0"
 log = "0.4.17"
 once_cell = "1.16.0"
 serde_json = "1.0.91"
 serde = { version = "1.0.151", features = ["derive"] }
 xcb = "1.2.0"
 tokio = { version = "1.23.0", features = ["full"] }
+iced_native = "0.7.0"

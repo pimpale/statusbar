@@ -6,7 +6,7 @@ use todos::Todos;
 
 use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
 use iced_winit::{
-     conversion, futures, program, renderer, winit, Clipboard, Color,
+     conversion, futures, renderer, winit, Clipboard, Color,
     Debug, Size,
 };
 
@@ -17,6 +17,7 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     platform::unix::{WindowBuilderExtUnix, XWindowType},
 };
+
 
 pub fn main() {
     env_logger::init();
@@ -32,8 +33,6 @@ pub fn main() {
         .with_inner_size(LogicalSize::new(1, todos.height()))
         .build(&event_loop)
         .unwrap();
-
-    let mut clipboard = Clipboard::connect(&window);
 
     let physical_size = window.inner_size();
 
@@ -104,7 +103,7 @@ pub fn main() {
     let mut debug = Debug::new();
     let mut renderer = Renderer::new(Backend::new(&device, Settings::default(), format));
 
-    let mut state = program::State::new(todos, viewport.logical_size(), &mut renderer, &mut debug);
+    let mut state = program_runner::State::new(todos, viewport.logical_size(), &mut renderer, &mut debug);
 
     // Run event loop
     event_loop.run(move |event, _, control_flow| {
@@ -154,7 +153,7 @@ pub fn main() {
                 // If there are events pending
                 if !state.is_queue_empty() {
                     // We update iced
-                    let command = state.update(
+                    let (command, uncaptured_events) = state.update(
                         viewport.logical_size(),
                         conversion::cursor_position(cursor_position, viewport.scale_factor()),
                         &mut renderer,
@@ -166,9 +165,8 @@ pub fn main() {
                         &mut debug,
                     );
 
-                    // set the window size to to what was requested
-                    let program = state.program();
-                    window.set_inner_size(LogicalSize::new(1, program.height()));
+                    // run the command that was gotten from iced
+                    state.run_command(command);
 
                     // and request a redraw
                     window.request_redraw();

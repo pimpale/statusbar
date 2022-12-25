@@ -1,9 +1,10 @@
+use iced_winit::widget::operation;
 // sourced from: https://github.com/iced-rs/iced/blob/master/native/src/program/state.rs
-use iced_winit::application;
 use iced_winit::event::{self, Event};
 use iced_winit::mouse;
 use iced_winit::renderer;
 use iced_winit::user_interface::{self, UserInterface};
+use iced_winit::{clipboard, conversion, winit, Executor, Proxy, Runtime};
 use iced_winit::{Clipboard, Command, Debug, Point, Program, Size};
 
 /// The execution state of a [`Program`]. It leverages caching, event
@@ -165,6 +166,39 @@ where
 
         (uncaptured_events, command)
     }
+
+    /// Runs the actions of a [`Command`].
+    fn run_command<E>(
+        &mut self,
+        bounds: Size,
+        renderer: &mut P::Renderer,
+        command: Command<P::Message>,
+        runtime: &mut Runtime<E, Proxy<P::Message>, P::Message>,
+        clipboard: &mut Clipboard,
+        proxy: &mut winit::event_loop::EventLoopProxy<P::Message>,
+        debug: &mut Debug,
+        window: &winit::window::Window,
+    ) where
+        E: Executor,
+        <<P as Program>::Renderer as iced_winit::Renderer>::Theme:
+            iced_winit::application::StyleSheet,
+    {
+        let cache_ref = self
+            .cache
+            .get_or_insert_with(|| user_interface::Cache::new());
+        run_command(
+            &mut self.program,
+            bounds,
+            cache_ref,
+            renderer,
+            command,
+            runtime,
+            clipboard,
+            proxy,
+            debug,
+            window,
+        );
+    }
 }
 
 fn build_user_interface<'a, P: Program>(
@@ -186,4 +220,105 @@ where
     debug.layout_finished();
 
     user_interface
+}
+
+/// Runs the actions of a [`Command`].
+fn run_command<P, E>(
+    program: &mut P,
+    bounds: Size,
+    cache: &mut user_interface::Cache,
+    renderer: &mut P::Renderer,
+    command: Command<P::Message>,
+    runtime: &mut Runtime<E, Proxy<P::Message>, P::Message>,
+    clipboard: &mut Clipboard,
+    proxy: &mut winit::event_loop::EventLoopProxy<P::Message>,
+    debug: &mut Debug,
+    window: &winit::window::Window,
+) where
+    P: Program,
+    E: Executor,
+    <<P as Program>::Renderer as iced_winit::Renderer>::Theme: iced_winit::application::StyleSheet,
+{
+    use iced_native::command;
+    use iced_native::window;
+
+    for action in command.actions() {
+        match action {
+            command::Action::Future(future) => {
+                runtime.spawn(future);
+            }
+            command::Action::Clipboard(action) => match action {
+                clipboard::Action::Read(tag) => {
+                    let message = tag(clipboard.read());
+
+                    proxy
+                        .send_event(message)
+                        .expect("Send message to event loop");
+                }
+                clipboard::Action::Write(contents) => {
+                    clipboard.write(contents);
+                }
+            },
+            command::Action::Window(action) => match action {
+                window::Action::Drag => {
+                    let _res = window.drag_window();
+                }
+                window::Action::Resize { width, height } => {
+                    window.set_inner_size(winit::dpi::LogicalSize { width, height });
+                }
+                window::Action::Maximize(value) => {
+                    window.set_maximized(value);
+                }
+                window::Action::Minimize(value) => {
+                    window.set_minimized(value);
+                }
+                window::Action::Move { x, y } => {
+                    window.set_outer_position(winit::dpi::LogicalPosition { x, y });
+                }
+                window::Action::SetMode(mode) => {
+                    window.set_visible(conversion::visible(mode));
+                    window.set_fullscreen(conversion::fullscreen(window.primary_monitor(), mode));
+                }
+                window::Action::ToggleMaximize => window.set_maximized(!window.is_maximized()),
+                window::Action::FetchMode(tag) => {
+                    let mode = if window.is_visible().unwrap_or(true) {
+                        conversion::mode(window.fullscreen())
+                    } else {
+                        iced_winit::window::Mode::Hidden
+                    };
+
+                    proxy
+                        .send_event(tag(mode))
+                        .expect("Send message to event loop");
+                }
+            },
+            command::Action::Widget(action) => {
+                let mut current_cache = std::mem::take(cache);
+                let mut current_operation = Some(action.into_operation());
+
+                let mut user_interface =
+                    build_user_interface(program, current_cache, renderer, bounds, debug);
+
+                while let Some(mut operation) = current_operation.take() {
+                    user_interface.operate(renderer, operation.as_mut());
+
+                    match operation.finish() {
+                        operation::Outcome::None => {}
+                        operation::Outcome::Some(message) => {
+                            proxy
+                                .send_event(message)
+                                .expect("Send message to event loop");
+                        }
+                        operation::Outcome::Chain(next) => {
+                            current_operation = Some(next);
+                        }
+                    }
+                }
+
+                current_cache = user_interface.into_cache();
+                *cache = current_cache;
+            }
+            command::Action::System(_) => todo!(),
+        }
+    }
 }
