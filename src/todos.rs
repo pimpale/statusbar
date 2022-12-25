@@ -1,7 +1,5 @@
 use iced_winit::alignment::{self, Alignment};
-use iced_winit::widget::{
-    button, checkbox, column, container, row, scrollable, text, text_input, Text,
-};
+use iced_winit::widget::{button, column, container, row, scrollable, text, text_input};
 use iced_winit::{theme, Command, Length};
 use iced_winit::{Element, Program};
 
@@ -12,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 static INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
+static ACTIVE_INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
 
 #[derive(Debug)]
 pub struct Todos {
@@ -25,10 +24,19 @@ pub enum State {
     Loaded(LoadedState),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TaskCompletionKind {
+    Success,
+    Failure,
+    Obsoleted,
+}
+
 #[derive(Debug)]
 pub struct LoadedState {
     input_value: String,
-    tasks: VecDeque<Task>,
+    active_index: Option<usize>,
+    live_tasks: VecDeque<String>,
+    finished_tasks: Vec<(String, TaskCompletionKind)>,
     dirty: bool,
     saving: bool,
 }
@@ -37,7 +45,9 @@ impl Default for LoadedState {
     fn default() -> Self {
         LoadedState {
             input_value: String::new(),
-            tasks: VecDeque::new(),
+            active_index: None,
+            live_tasks: VecDeque::new(),
+            finished_tasks: Vec::new(),
             dirty: false,
             saving: false,
         }
@@ -46,13 +56,25 @@ impl Default for LoadedState {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    // load and save
+    Save,
     Loaded(Result<SavedState, LoadError>),
     Saved(Result<(), SaveError>),
-    InputChanged(String),
-    CreateTask,
-    Expand,
-    Collapse,
-    TaskMessage(usize, TaskMessage),
+    // change dock
+    ExpandDock,
+    CollapseDock,
+    // operations performed on the input_value
+    EditInput(String),
+    PushInput,
+    QueueInput,
+    // operations performed on the currently active index
+    EditActive(String),
+    QueueActive,
+    PopActive(TaskCompletionKind),
+    // operations on the topmost value
+    PopTopmost(TaskCompletionKind),
+    // set active
+    SetActive(Option<usize>),
 }
 
 impl Todos {
@@ -66,7 +88,7 @@ impl Todos {
 
     pub fn height(&self) -> u32 {
         match self.expanded {
-            true => 200,
+            true => 250,
             false => 50,
         }
     }
@@ -83,7 +105,9 @@ impl Program for Todos {
                     Message::Loaded(Ok(state)) => {
                         self.state = State::Loaded(LoadedState {
                             input_value: state.input_value,
-                            tasks: state.tasks.into(),
+                            active_index: None,
+                            finished_tasks: state.finished_tasks,
+                            live_tasks: state.live_tasks.into(),
                             dirty: false,
                             saving: false,
                         });
@@ -100,50 +124,64 @@ impl Program for Todos {
                 let mut saved = false;
 
                 let command = match message {
-                    Message::Collapse => {
+                    Message::CollapseDock => {
                         self.expanded = false;
+                        state.input_value = String::new();
+                        state.active_index = None;
                         Command::none()
                     }
-                    Message::Expand => {
+                    Message::ExpandDock => {
                         self.expanded = true;
                         Command::none()
                     }
-                    Message::InputChanged(value) => {
+                    Message::EditInput(value) => {
                         state.input_value = value;
-
                         Command::none()
                     }
-                    Message::CreateTask => {
-                        if !state.input_value.is_empty() {
-                            state.tasks.push_front(Task::new(state.input_value.clone()));
-                            state.input_value.clear();
+                    Message::PushInput => {
+                        state
+                            .live_tasks
+                            .push_front(std::mem::take(&mut state.input_value));
+                        state.active_index = state.active_index.map(|x| x + 1);
+                        Command::none()
+                    }
+                    Message::QueueInput => {
+                        state
+                            .live_tasks
+                            .push_back(std::mem::take(&mut state.input_value));
+                        Command::none()
+                    }
+                    Message::EditActive(value) => {
+                        state.live_tasks[state.active_index.unwrap()] = value;
+                        Command::none()
+                    }
+                    Message::QueueActive => {
+                        let value = state
+                            .live_tasks
+                            .remove(state.active_index.unwrap())
+                            .unwrap();
+                        state.live_tasks.push_back(value);
+                        state.active_index = Some(state.live_tasks.len() - 1);
+                        Command::none()
+                    }
+                    Message::PopActive(kind) => {
+                        let value = state
+                            .live_tasks
+                            .remove(state.active_index.unwrap())
+                            .unwrap();
+                        state.finished_tasks.push((value, kind));
+                        state.active_index = None;
+                        Command::none()
+                    }
+                    Message::PopTopmost(kind) => {
+                        if let Some(task) = state.live_tasks.pop_front() {
+                            state.finished_tasks.push((task, kind));
                         }
-
                         Command::none()
                     }
-                    Message::TaskMessage(i, TaskMessage::Delete) => {
-                        state.tasks.remove(i);
-
+                    Message::SetActive(a) => {
+                        state.active_index = a;
                         Command::none()
-                    }
-                    Message::TaskMessage(i, task_message) => {
-                        if let Some(task) = state.tasks.get_mut(i) {
-                            let should_focus = matches!(task_message, TaskMessage::Edit);
-
-                            task.update(task_message);
-
-                            if should_focus {
-                                let id = Task::text_input_id(i);
-                                Command::batch(vec![
-                                    text_input::focus(id.clone()),
-                                    text_input::select_all(id),
-                                ])
-                            } else {
-                                Command::none()
-                            }
-                        } else {
-                            Command::none()
-                        }
                     }
                     Message::Saved(_) => {
                         state.saving = false;
@@ -151,7 +189,8 @@ impl Program for Todos {
 
                         Command::none()
                     }
-                    _ => Command::none(),
+                    Message::Save => todo!(),
+                    Message::Loaded(_) => todo!(),
                 };
 
                 if !saved {
@@ -165,7 +204,8 @@ impl Program for Todos {
                     Command::perform(
                         SavedState {
                             input_value: state.input_value.clone(),
-                            tasks: state.tasks.clone().into(),
+                            finished_tasks: state.finished_tasks.clone(),
+                            live_tasks: state.live_tasks.clone().into(),
                         }
                         .save(),
                         Message::Saved,
@@ -193,26 +233,64 @@ impl Program for Todos {
             Self {
                 state:
                     State::Loaded(LoadedState {
-                        input_value, tasks, ..
+                        input_value,
+                        live_tasks,
+                        active_index,
+                        ..
                     }),
                 expanded: true,
             } => {
-                let input = text_input(
-                    "What needs to be done?",
-                    &input_value,
-                    Message::InputChanged,
-                )
-                .id(INPUT_ID.clone())
-                .on_submit(Message::CreateTask);
+                let input = text_input("What needs to be done?", input_value, Message::EditInput)
+                    .id(INPUT_ID.clone())
+                    .on_submit(Message::PushInput);
 
-                let tasks: Element<_, Renderer> = if tasks.len() > 0 {
+                let tasks: Element<_, Renderer> = if live_tasks.len() > 0 {
                     column(
-                        tasks
+                        live_tasks
                             .iter()
                             .enumerate()
                             .map(|(i, task)| {
-                                task.view(i)
-                                    .map(move |message| Message::TaskMessage(i, message))
+                                let header = text(format!("{}|", i + 1)).size(30);
+
+                                match active_index {
+                                    Some(idx) if i == *idx => row(vec![
+                                        header.into(),
+                                        button("Task Succeeded")
+                                            .style(theme::Button::Positive)
+                                            .on_press(Message::PopActive(
+                                                TaskCompletionKind::Success,
+                                            ))
+                                            .into(),
+                                        text_input("Edit Task", task, Message::EditActive)
+                                            .id(ACTIVE_INPUT_ID.clone())
+                                            .on_submit(Message::SetActive(None))
+                                            .into(),
+                                        button("Task Failed")
+                                            .style(theme::Button::Destructive)
+                                            .on_press(Message::PopActive(
+                                                TaskCompletionKind::Failure,
+                                            ))
+                                            .into(),
+                                        button("Task Obsoleted")
+                                            .style(theme::Button::Secondary)
+                                            .on_press(Message::PopActive(
+                                                TaskCompletionKind::Obsoleted,
+                                            ))
+                                            .into(),
+                                    ])
+                                    .spacing(10)
+                                    .into(),
+                                    _ => row(vec![
+                                        header.into(),
+                                        button(text(&task))
+                                            .on_press(Message::SetActive(Some(i)))
+                                            .style(theme::Button::Text)
+                                            .width(Length::Fill)
+                                            .into(),
+                                    ])
+                                    .spacing(10)
+                                    .into(),
+                                }
                             })
                             .collect(),
                     )
@@ -223,7 +301,7 @@ impl Program for Todos {
                 };
 
                 row(vec![
-                    button("Collapse").on_press(Message::Collapse).into(),
+                    button("Collapse").on_press(Message::CollapseDock).into(),
                     column(vec![input.into(), scrollable(tasks).into()])
                         .spacing(10)
                         .width(Length::Shrink)
@@ -234,26 +312,47 @@ impl Program for Todos {
                 .into()
             }
             Self {
-                state: State::Loaded(LoadedState { tasks, .. }),
+                state: State::Loaded(LoadedState { live_tasks, .. }),
                 expanded: false,
-            } => match tasks.front() {
-                None => container(button("Click to Add Task").on_press(Message::Expand))
+            } => match live_tasks.front() {
+                None => container(button("Click to Add Task").on_press(Message::ExpandDock))
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .align_x(alignment::Horizontal::Left)
-                    .align_y(alignment::Vertical::Top)
+                    .center_x()
+                    .center_y()
                     .padding(10)
                     .into(),
-                Some(task) => row(vec![
-                    button("Expand").on_press(Message::Expand).into(),
-                    button(text(&task.description))
-                        .height(Length::Fill)
-                        .style(
-                        .into(),
-                ])
+                Some(task) => container(
+                    row(vec![
+                        button("Task Succeeded")
+                            .height(Length::Fill)
+                            .style(theme::Button::Positive)
+                            .on_press(Message::PopTopmost(TaskCompletionKind::Success))
+                            .into(),
+                        button(text(task).horizontal_alignment(alignment::Horizontal::Center))
+                            .height(Length::Fill)
+                            .width(Length::Fill)
+                            .style(theme::Button::Text)
+                            .on_press(Message::ExpandDock)
+                            .into(),
+                        button("Task Failed")
+                            .height(Length::Fill)
+                            .style(theme::Button::Destructive)
+                            .on_press(Message::PopTopmost(TaskCompletionKind::Failure))
+                            .into(),
+                        button("Task Obsoleted")
+                            .height(Length::Fill)
+                            .style(theme::Button::Secondary)
+                            .on_press(Message::PopTopmost(TaskCompletionKind::Obsoleted))
+                            .into(),
+                    ])
+                    .height(Length::Fill)
+                    .spacing(10),
+                )
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .spacing(10)
+                .center_x()
+                .center_y()
                 .padding(10)
                 .into(),
             },
@@ -261,133 +360,12 @@ impl Program for Todos {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Task {
-    description: String,
-    completed: bool,
-
-    #[serde(skip)]
-    state: TaskState,
-}
-
-#[derive(Debug, Clone)]
-pub enum TaskState {
-    Idle,
-    Editing,
-}
-
-impl Default for TaskState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum TaskMessage {
-    Completed(bool),
-    Edit,
-    DescriptionEdited(String),
-    FinishEdition,
-    Delete,
-}
-
-impl Task {
-    fn text_input_id(i: usize) -> text_input::Id {
-        text_input::Id::new(format!("task-{}", i))
-    }
-
-    fn new(description: String) -> Self {
-        Task {
-            description,
-            completed: false,
-            state: TaskState::Idle,
-        }
-    }
-
-    fn update(&mut self, message: TaskMessage) {
-        match message {
-            TaskMessage::Completed(completed) => {
-                self.completed = completed;
-            }
-            TaskMessage::Edit => {
-                self.state = TaskState::Editing;
-            }
-            TaskMessage::DescriptionEdited(new_description) => {
-                self.description = new_description;
-            }
-            TaskMessage::FinishEdition => {
-                if !self.description.is_empty() {
-                    self.state = TaskState::Idle;
-                }
-            }
-            TaskMessage::Delete => {}
-        }
-    }
-
-    fn view(&self, i: usize) -> Element<TaskMessage, Renderer> {
-        match &self.state {
-            TaskState::Idle => {
-                let checkbox = checkbox(&self.description, self.completed, TaskMessage::Completed)
-                    .width(Length::Fill);
-
-                row(vec![
-                    checkbox.into(),
-                    button(edit_icon())
-                        .on_press(TaskMessage::Edit)
-                        .padding(10)
-                        .style(theme::Button::Text)
-                        .into(),
-                ])
-                .spacing(20)
-                .align_items(Alignment::Center)
-                .into()
-            }
-            TaskState::Editing => {
-                let text_input = text_input(
-                    "Describe your task...",
-                    &self.description,
-                    TaskMessage::DescriptionEdited,
-                )
-                .id(Self::text_input_id(i))
-                .on_submit(TaskMessage::FinishEdition)
-                .padding(10);
-
-                row(vec![
-                    text_input.into(),
-                    button("Delete")
-                        .on_press(TaskMessage::Delete)
-                        .padding(10)
-                        .style(theme::Button::Destructive)
-                        .into(),
-                ])
-                .spacing(20)
-                .align_items(Alignment::Center)
-                .into()
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Filter {
-    Active,
-    Completed,
-}
-
-fn icon(unicode: char) -> Text<'static, Renderer> {
-    text(unicode.to_string())
-        //.font(ICONS)
-        .width(Length::Units(20))
-        .horizontal_alignment(alignment::Horizontal::Center)
-        .size(20)
-}
-
-
 // Persistence
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedState {
     input_value: String,
-    tasks: Vec<Task>,
+    live_tasks: Vec<String>,
+    finished_tasks: Vec<(String, TaskCompletionKind)>,
 }
 
 #[derive(Debug, Clone)]
