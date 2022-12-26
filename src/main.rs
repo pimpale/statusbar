@@ -1,23 +1,22 @@
+mod program_runner;
+mod advanced_text_input;
 mod todos;
 mod wm_hints;
-mod program_runner;
 
 use todos::Todos;
 
 use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
 use iced_winit::{
-     conversion, futures, renderer, winit, Clipboard, Color,
-    Debug, Size,
+    conversion, futures, renderer, winit, Clipboard, Color, Debug, Proxy, Runtime, Size,
 };
 
 use winit::{
     dpi::LogicalSize,
     dpi::PhysicalPosition,
     event::{Event, ModifiersState, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoopBuilder},
     platform::unix::{WindowBuilderExtUnix, XWindowType},
 };
-
 
 pub fn main() {
     env_logger::init();
@@ -26,11 +25,13 @@ pub fn main() {
     let todos = Todos::new();
 
     // Initialize winit
-    let event_loop = EventLoop::new();
+    let event_loop =
+        EventLoopBuilder::<<Todos as iced_winit::Program>::Message>::with_user_event().build();
 
     let window = winit::window::WindowBuilder::new()
         .with_x11_window_type(vec![XWindowType::Dock])
-        .with_inner_size(LogicalSize::new(1, todos.height()))
+        // todo: don't hardcode this, use an initial command or something
+        .with_inner_size(LogicalSize::new(1, 50))
         .build(&event_loop)
         .unwrap();
 
@@ -45,6 +46,12 @@ pub fn main() {
     let mut cursor_position = PhysicalPosition::new(-1.0, -1.0);
     let mut modifiers = ModifiersState::default();
     let mut clipboard = Clipboard::connect(&window);
+    let mut proxy = event_loop.create_proxy();
+    let mut runtime = {
+        let proxy = Proxy::new(event_loop.create_proxy());
+        let executor = tokio::runtime::Runtime::new().unwrap();
+        Runtime::new(executor, proxy)
+    };
 
     // Initialize wgpu
     let backend = wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::PRIMARY);
@@ -103,7 +110,8 @@ pub fn main() {
     let mut debug = Debug::new();
     let mut renderer = Renderer::new(Backend::new(&device, Settings::default(), format));
 
-    let mut state = program_runner::State::new(todos, viewport.logical_size(), &mut renderer, &mut debug);
+    let mut state =
+        program_runner::State::new(todos, viewport.logical_size(), &mut renderer, &mut debug);
 
     // Run event loop
     event_loop.run(move |event, _, control_flow| {
@@ -153,7 +161,7 @@ pub fn main() {
                 // If there are events pending
                 if !state.is_queue_empty() {
                     // We update iced
-                    let (command, uncaptured_events) = state.update(
+                    let (uncaptured_events, maybe_command) = state.update(
                         viewport.logical_size(),
                         conversion::cursor_position(cursor_position, viewport.scale_factor()),
                         &mut renderer,
@@ -166,7 +174,34 @@ pub fn main() {
                     );
 
                     // run the command that was gotten from iced
-                    state.run_command(command);
+                    if let Some(command) = maybe_command {
+                        state.run_command(
+                            command,
+                            viewport.logical_size(),
+                            conversion::cursor_position(cursor_position, viewport.scale_factor()),
+                            &mut renderer,
+                            &iced_wgpu::Theme::Dark,
+                            &renderer::Style {
+                                text_color: Color::WHITE,
+                            },
+                            &mut runtime,
+                            &mut clipboard,
+                            &mut proxy,
+                            &mut debug,
+                            &window,
+                        );
+                        state.update(
+                            viewport.logical_size(),
+                            conversion::cursor_position(cursor_position, viewport.scale_factor()),
+                            &mut renderer,
+                            &iced_wgpu::Theme::Dark,
+                            &renderer::Style {
+                                text_color: Color::WHITE,
+                            },
+                            &mut clipboard,
+                            &mut debug,
+                        );
+                    }
 
                     // and request a redraw
                     window.request_redraw();

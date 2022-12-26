@@ -15,7 +15,7 @@ where
     P: Program + 'static,
 {
     program: P,
-    cache: Option<user_interface::Cache>,
+    cache: user_interface::Cache,
     queued_events: Vec<Event>,
     queued_messages: Vec<P::Message>,
     mouse_interaction: mouse::Interaction,
@@ -42,7 +42,7 @@ where
             debug,
         );
 
-        let cache = Some(user_interface.into_cache());
+        let cache = user_interface.into_cache();
 
         State {
             program,
@@ -100,7 +100,7 @@ where
     ) -> (Vec<Event>, Option<Command<P::Message>>) {
         let mut user_interface = build_user_interface(
             &mut self.program,
-            self.cache.take().unwrap(),
+            std::mem::take(&mut self.cache),
             renderer,
             bounds,
             debug,
@@ -134,7 +134,7 @@ where
             self.mouse_interaction = user_interface.draw(renderer, theme, style, cursor_position);
             debug.draw_finished();
 
-            self.cache = Some(user_interface.into_cache());
+            self.cache = user_interface.into_cache();
 
             None
         } else {
@@ -159,7 +159,7 @@ where
             self.mouse_interaction = user_interface.draw(renderer, theme, style, cursor_position);
             debug.draw_finished();
 
-            self.cache = Some(user_interface.into_cache());
+            self.cache = user_interface.into_cache();
 
             Some(commands)
         };
@@ -168,11 +168,14 @@ where
     }
 
     /// Runs the actions of a [`Command`].
-    fn run_command<E>(
+    pub fn run_command<E>(
         &mut self,
-        bounds: Size,
-        renderer: &mut P::Renderer,
         command: Command<P::Message>,
+        bounds: Size,
+        cursor_position: Point,
+        renderer: &mut P::Renderer,
+        theme: &<P::Renderer as iced_winit::Renderer>::Theme,
+        style: &renderer::Style,
         runtime: &mut Runtime<E, Proxy<P::Message>, P::Message>,
         clipboard: &mut Clipboard,
         proxy: &mut winit::event_loop::EventLoopProxy<P::Message>,
@@ -180,16 +183,11 @@ where
         window: &winit::window::Window,
     ) where
         E: Executor,
-        <<P as Program>::Renderer as iced_winit::Renderer>::Theme:
-            iced_winit::application::StyleSheet,
     {
-        let cache_ref = self
-            .cache
-            .get_or_insert_with(|| user_interface::Cache::new());
         run_command(
             &mut self.program,
             bounds,
-            cache_ref,
+            &mut self.cache,
             renderer,
             command,
             runtime,
@@ -198,6 +196,20 @@ where
             debug,
             window,
         );
+
+        let mut user_interface = build_user_interface(
+            &mut self.program,
+            std::mem::take(&mut self.cache),
+            renderer,
+            bounds,
+            debug,
+        );
+
+        debug.draw_started();
+        self.mouse_interaction = user_interface.draw(renderer, theme, style, cursor_position);
+        debug.draw_finished();
+
+        self.cache = user_interface.into_cache();
     }
 }
 

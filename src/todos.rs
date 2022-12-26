@@ -1,16 +1,18 @@
-use iced_winit::alignment::{self, Alignment};
+use iced_winit::alignment;
 use iced_winit::widget::{button, column, container, row, scrollable, text, text_input};
 use iced_winit::{theme, Command, Length};
 use iced_winit::{Element, Program};
 
-use iced_wgpu::{Color, Renderer};
+use iced_wgpu::Renderer;
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
+use crate::advanced_text_input;
+
 static INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
-static ACTIVE_INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
+static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 
 #[derive(Debug)]
 pub struct Todos {
@@ -77,13 +79,6 @@ impl Todos {
             state: State::Loaded(LoadedState::default()),
         }
     }
-
-    pub fn height(&self) -> u32 {
-        match self.expanded {
-            true => 250,
-            false => 50,
-        }
-    }
 }
 
 impl Program for Todos {
@@ -95,73 +90,112 @@ impl Program for Todos {
     fn update(&mut self, message: Message) -> Command<Message> {
         match &mut self.state {
             State::Loading => Command::none(),
-            State::Loaded(state) => {
-                match message {
-                    Message::CollapseDock => {
-                        self.expanded = false;
-                        state.input_value = String::new();
-                        state.active_index = None;
-                        Command::none()
-                    }
-                    Message::ExpandDock => {
-                        self.expanded = true;
-                        Command::none()
-                    }
-                    Message::EditInput(value) => {
-                        state.input_value = value;
-                        Command::none()
-                    }
-                    Message::PushInput => {
-                        state
-                            .live_tasks
-                            .push_front(std::mem::take(&mut state.input_value));
-                        state.active_index = state.active_index.map(|x| x + 1);
-                        Command::none()
-                    }
-                    Message::QueueInput => {
-                        state
-                            .live_tasks
-                            .push_back(std::mem::take(&mut state.input_value));
-                        Command::none()
-                    }
-                    Message::EditActive(value) => {
-                        state.live_tasks[state.active_index.unwrap()] = value;
-                        Command::none()
-                    }
-                    Message::QueueActive => {
-                        let value = state
-                            .live_tasks
-                            .remove(state.active_index.unwrap())
-                            .unwrap();
-                        state.live_tasks.push_back(value);
-                        state.active_index = Some(state.live_tasks.len() - 1);
-                        Command::none()
-                    }
-                    Message::PopActive(kind) => {
-                        let value = state
-                            .live_tasks
-                            .remove(state.active_index.unwrap())
-                            .unwrap();
-                        state.finished_tasks.push((value, kind));
-                        state.active_index = None;
-                        Command::none()
-                    }
-                    Message::PopTopmost(kind) => {
-                        if let Some(task) = state.live_tasks.pop_front() {
-                            state.finished_tasks.push((task, kind));
+            State::Loaded(state) => match message {
+                Message::CollapseDock => {
+                    self.expanded = false;
+                    state.input_value = String::new();
+                    state.active_index = None;
+                    iced_winit::window::resize(1, 50)
+                }
+                Message::ExpandDock => {
+                    self.expanded = true;
+                    Command::batch([
+                        iced_winit::window::resize(1, 250),
+                        text_input::focus(INPUT_ID.clone()),
+                    ])
+                }
+                Message::EditInput(value) => {
+                    state.input_value = value;
+                    Command::none()
+                }
+                Message::PushInput => {
+                    let val = std::mem::take(&mut state.input_value);
+                    match val.as_str() {
+                        "q" => {
+                            self.expanded = false;
+                            state.active_index = None;
+                            iced_winit::window::resize(1, 50)
                         }
-                        Command::none()
-                    }
-                    Message::SetActive(a) => {
-                        state.active_index = a;
-                        if let Some(i) = a {
-                            text_input::focus(ACTIVE_INPUT_ID.clone())
-                        } else {
+                        "po" => {
+                            if let Some(task) = state.live_tasks.pop_front() {
+                                state
+                                    .finished_tasks
+                                    .push((task, TaskCompletionKind::Obsoleted));
+                            }
+                            Command::none()
+                        }
+                        "ps" => {
+                            if let Some(task) = state.live_tasks.pop_front() {
+                                state
+                                    .finished_tasks
+                                    .push((task, TaskCompletionKind::Success));
+                            }
+                            Command::none()
+                        }
+                        "pf" => {
+                            if let Some(task) = state.live_tasks.pop_front() {
+                                state
+                                    .finished_tasks
+                                    .push((task, TaskCompletionKind::Failure));
+                            }
+                            Command::none()
+                        }
+                        "r" => {
+                            if let Some((task, _)) = state.finished_tasks.pop() {
+                                state.live_tasks.push_front(task);
+                            }
+                            Command::none()
+                        }
+                        _ => {
+                            state.live_tasks.push_front(val);
+                            state.active_index = state.active_index.map(|x| x + 1);
                             Command::none()
                         }
                     }
                 }
-            }
+                Message::QueueInput => {
+                    state
+                        .live_tasks
+                        .push_back(std::mem::take(&mut state.input_value));
+                    Command::none()
+                }
+                Message::EditActive(value) => {
+                    state.live_tasks[state.active_index.unwrap()] = value;
+                    Command::none()
+                }
+                Message::QueueActive => {
+                    let value = state
+                        .live_tasks
+                        .remove(state.active_index.unwrap())
+                        .unwrap();
+                    state.live_tasks.push_back(value);
+                    state.active_index = Some(state.live_tasks.len() - 1);
+                    Command::none()
+                }
+                Message::PopActive(kind) => {
+                    let value = state
+                        .live_tasks
+                        .remove(state.active_index.unwrap())
+                        .unwrap();
+                    state.finished_tasks.push((value, kind));
+                    state.active_index = None;
+                    Command::none()
+                }
+                Message::PopTopmost(kind) => {
+                    if let Some(task) = state.live_tasks.pop_front() {
+                        state.finished_tasks.push((task, kind));
+                    }
+                    Command::none()
+                }
+                Message::SetActive(a) => {
+                    state.active_index = a;
+                    if a.is_some() {
+                        advanced_text_input::focus(ACTIVE_INPUT_ID.clone())
+                    } else {
+                        Command::none()
+                    }
+                }
+            },
         }
     }
 
@@ -196,7 +230,7 @@ impl Program for Todos {
                             .iter()
                             .enumerate()
                             .map(|(i, task)| {
-                                let header = text(format!("{}|", i + 1)).size(30);
+                                let header = text(format!("{}|", i + 1)).size(25);
 
                                 match active_index {
                                     Some(idx) if i == *idx => row(vec![
@@ -207,10 +241,15 @@ impl Program for Todos {
                                                 TaskCompletionKind::Success,
                                             ))
                                             .into(),
-                                        text_input("Edit Task", task, Message::EditActive)
-                                            .id(ACTIVE_INPUT_ID.clone())
-                                            .on_submit(Message::SetActive(None))
-                                            .into(),
+                                        advanced_text_input::AdvancedTextInput::new(
+                                            "Edit Task",
+                                            task,
+                                            Message::EditActive,
+                                        )
+                                        .id(ACTIVE_INPUT_ID.clone())
+                                        .on_blur(Message::SetActive(None))
+                                        .on_submit(Message::SetActive(None))
+                                        .into(),
                                         button("Task Failed")
                                             .style(theme::Button::Destructive)
                                             .on_press(Message::PopActive(
@@ -240,7 +279,8 @@ impl Program for Todos {
                             })
                             .collect(),
                     )
-                    .spacing(10)
+                    // pad right to avoid clipping scrollable
+                    .padding([0, 15, 0, 0])
                     .into()
                 } else {
                     text("You have not created a task yet...").size(25).into()
