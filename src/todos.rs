@@ -1,5 +1,5 @@
 use iced_winit::alignment;
-use iced_winit::widget::{button, column, container, row, scrollable, text, text_input};
+use iced_winit::widget::{button, column, container, row, scrollable, text};
 use iced_winit::{theme, Command, Length};
 use iced_winit::{Element, Program};
 
@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 
 use crate::advanced_text_input;
 
-static INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
+static INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 
 #[derive(Debug)]
@@ -101,7 +101,7 @@ impl Program for Todos {
                     self.expanded = true;
                     Command::batch([
                         iced_winit::window::resize(1, 250),
-                        text_input::focus(INPUT_ID.clone()),
+                        advanced_text_input::focus(INPUT_ID.clone()),
                     ])
                 }
                 Message::EditInput(value) => {
@@ -220,9 +220,14 @@ impl Program for Todos {
                     }),
                 expanded: true,
             } => {
-                let input = text_input("What needs to be done?", input_value, Message::EditInput)
-                    .id(INPUT_ID.clone())
-                    .on_submit(Message::PushInput);
+                let input = advanced_text_input::AdvancedTextInput::new(
+                    "What needs to be done?",
+                    input_value,
+                    Message::EditInput,
+                )
+                .id(INPUT_ID.clone())
+                .on_focus(Message::SetActive(None))
+                .on_submit(Message::PushInput);
 
                 let tasks: Element<_, Renderer> = if live_tasks.len() > 0 {
                     column(
@@ -247,7 +252,6 @@ impl Program for Todos {
                                             Message::EditActive,
                                         )
                                         .id(ACTIVE_INPUT_ID.clone())
-                                        .on_blur(Message::SetActive(None))
                                         .on_submit(Message::SetActive(None))
                                         .into(),
                                         button("Task Failed")
