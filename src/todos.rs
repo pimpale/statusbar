@@ -110,7 +110,7 @@ impl Program for Todos {
                 }
                 Message::PushInput => {
                     let val = std::mem::take(&mut state.input_value);
-                    match val.as_str() {
+                    match val.split_once(" ").map(|x| x.0).unwrap_or(val.as_str()) {
                         "q" => {
                             self.expanded = false;
                             state.active_index = None;
@@ -143,6 +143,14 @@ impl Program for Todos {
                         "r" => {
                             if let Some((task, _)) = state.finished_tasks.pop() {
                                 state.live_tasks.push_front(task);
+                            }
+                            Command::none()
+                        }
+                        "swp" => {
+                            if let Ok((i, j)) = sscanf::scanf!(val, "swp {} {}", usize, usize) {
+                                if i < state.live_tasks.len() && j < state.live_tasks.len() {
+                                    state.live_tasks.swap(i, j);
+                                }
                             }
                             Command::none()
                         }
@@ -235,7 +243,7 @@ impl Program for Todos {
                             .iter()
                             .enumerate()
                             .map(|(i, task)| {
-                                let header = text(format!("{}|", i + 1)).size(25);
+                                let header = text(format!("{}|", i)).size(25);
 
                                 match active_index {
                                     Some(idx) if i == *idx => row(vec![
