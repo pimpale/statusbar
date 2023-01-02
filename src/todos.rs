@@ -1,3 +1,4 @@
+use iced_native::command::Action;
 use iced_native::Subscription;
 use iced_winit::alignment;
 use iced_winit::widget::{button, column, container, row, scrollable, text};
@@ -9,6 +10,7 @@ use iced_wgpu::Renderer;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use crate::advanced_text_input;
 use crate::wm_hints;
@@ -75,7 +77,12 @@ pub enum Message {
     PopTopmost(TaskCompletionKind),
     // set active
     SetActive(Option<usize>),
+    Yeet,
 }
+
+
+
+
 
 impl Todos {
     pub fn new(wm_state: wm_hints::WmHintsState) -> Todos {
@@ -98,6 +105,10 @@ impl ProgramWithSubscription for Todos {
         match &mut self.state {
             State::Loading => Command::none(),
             State::Loaded(state) => match message {
+                Message::Yeet => {
+                    println!("yeet");
+                    Command::none()
+                }
                 Message::EventOccurred(event) => {
                     if self.expanded {
                         match event {
@@ -129,7 +140,6 @@ impl ProgramWithSubscription for Todos {
 
                     // grab keyboard focus
                     wm_hints::grab_keyboard(&self.wm_state).unwrap();
-
 
                     Command::batch([
                         iced_winit::window::resize(1, 250),
@@ -398,6 +408,7 @@ impl ProgramWithSubscription for Todos {
             },
         }
     }
+
     fn handle_uncaptured_events(&self, events: Vec<iced_native::Event>) -> Vec<Self::Message> {
         events.into_iter().map(Message::EventOccurred).collect()
     }

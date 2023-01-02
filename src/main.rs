@@ -48,7 +48,7 @@ pub fn main() {
     let mut clipboard = Clipboard::connect(&window);
     let mut proxy = event_loop.create_proxy();
     let mut runtime = {
-        let proxy = Proxy::new(event_loop.create_proxy());
+        let proxy = Proxy::new(proxy.clone());
         let executor = tokio::runtime::Runtime::new().unwrap();
         Runtime::new(executor, proxy)
     };
@@ -119,6 +119,9 @@ pub fn main() {
         *control_flow = ControlFlow::Wait;
 
         match event {
+            Event::UserEvent(message) => {
+                state.queue_message(message);
+            }
             Event::WindowEvent { event, .. } => {
                 match event {
                     WindowEvent::CursorMoved { position, .. } => {
