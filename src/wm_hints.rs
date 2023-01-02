@@ -1,8 +1,12 @@
+use derivative::Derivative;
 use iced_winit::winit;
 use xcb::{x, XidNew};
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct WmHintsState {
     screen_id: i32,
+    #[derivative(Debug = "ignore")]
     conn: xcb::Connection,
     window: xcb::x::Window,
 }

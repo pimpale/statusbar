@@ -1,7 +1,8 @@
+use iced_native::Subscription;
 use iced_winit::alignment;
 use iced_winit::widget::{button, column, container, row, scrollable, text};
+use iced_winit::Element;
 use iced_winit::{theme, Command, Length};
-use iced_winit::{Element};
 
 use iced_wgpu::Renderer;
 
@@ -10,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 use crate::advanced_text_input;
+use crate::wm_hints;
 
 use crate::program_runner::ProgramWithSubscription;
 
@@ -18,6 +20,7 @@ static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_
 
 #[derive(Debug)]
 pub struct Todos {
+    wm_state: wm_hints::WmHintsState,
     expanded: bool,
     state: State,
 }
@@ -56,6 +59,7 @@ impl Default for LoadedState {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    EventOccurred(iced_native::Event),
     // change dock
     ExpandDock,
     CollapseDock,
@@ -74,8 +78,9 @@ pub enum Message {
 }
 
 impl Todos {
-    pub fn new() -> Todos {
+    pub fn new(wm_state: wm_hints::WmHintsState) -> Todos {
         Todos {
+            wm_state,
             expanded: false,
             // state: State::Loading,
             state: State::Loaded(LoadedState::default()),
@@ -93,14 +98,39 @@ impl ProgramWithSubscription for Todos {
         match &mut self.state {
             State::Loading => Command::none(),
             State::Loaded(state) => match message {
+                Message::EventOccurred(event) => {
+                    if self.expanded {
+                        match event {
+                            // grab keyboard focus on cursor enter
+                            iced_native::Event::Mouse(iced_native::mouse::Event::CursorEntered) => {
+                                wm_hints::grab_keyboard(&self.wm_state).unwrap();
+                            }
+                            // release keyboard focus on cursor exit
+                            iced_native::Event::Mouse(iced_native::mouse::Event::CursorLeft) => {
+                                wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
+                            }
+                            _ => {}
+                        }
+                    }
+                    Command::none()
+                }
                 Message::CollapseDock => {
                     self.expanded = false;
                     state.input_value = String::new();
                     state.active_index = None;
+
+                    // release keyboard focus
+                    wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
+
                     iced_winit::window::resize(1, 50)
                 }
                 Message::ExpandDock => {
                     self.expanded = true;
+
+                    // grab keyboard focus
+                    wm_hints::grab_keyboard(&self.wm_state).unwrap();
+
+
                     Command::batch([
                         iced_winit::window::resize(1, 250),
                         advanced_text_input::focus(INPUT_ID.clone()),
@@ -237,6 +267,7 @@ impl ProgramWithSubscription for Todos {
                         ..
                     }),
                 expanded: true,
+                ..
             } => {
                 let input = advanced_text_input::AdvancedTextInput::new(
                     "What needs to be done?",
@@ -322,6 +353,7 @@ impl ProgramWithSubscription for Todos {
             Self {
                 state: State::Loaded(LoadedState { live_tasks, .. }),
                 expanded: false,
+                ..
             } => match live_tasks.front() {
                 None => container(button("Click to Add Task").on_press(Message::ExpandDock))
                     .width(Length::Fill)
@@ -365,5 +397,8 @@ impl ProgramWithSubscription for Todos {
                 .into(),
             },
         }
+    }
+    fn handle_uncaptured_events(&self, events: Vec<iced_native::Event>) -> Vec<Self::Message> {
+        events.into_iter().map(Message::EventOccurred).collect()
     }
 }

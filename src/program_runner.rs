@@ -1,4 +1,4 @@
-use iced_native::{Element, Subscription};
+use iced_native::Element;
 use iced_winit::widget::operation;
 // sourced from: https://github.com/iced-rs/iced/blob/master/native/src/program/state.rs
 use iced_winit::event::{self, Event};
@@ -30,18 +30,8 @@ pub trait ProgramWithSubscription {
     /// These widgets can produce __messages__ based on user interaction.
     fn view(&self) -> Element<'_, Self::Message, Self::Renderer>;
 
-    /// Returns the event `Subscription` for the current state of the
-    /// application.
-    ///
-    /// The messages produced by the `Subscription` will be handled by
-    /// [`update`](#tymethod.update).
-    ///
-    /// A `Subscription` will be kept alive as long as you keep returning it!
-    ///
-    /// By default, it returns an empty subscription.
-    fn subscription(&self) -> Subscription<Self::Message> {
-        Subscription::none()
-    }
+    /// returns a list of messages that result from processing the uncaptured events
+    fn handle_uncaptured_events(&self, event: Vec<Event>) -> Vec<Self::Message>;
 }
 
 /// The execution state of a [`Program`]. It leverages caching, event
@@ -61,7 +51,8 @@ where
 impl<P> State<P>
 where
     P: ProgramWithSubscription + 'static,
-    <<P as ProgramWithSubscription>::Renderer as iced_winit::Renderer>::Theme: iced_winit::application::StyleSheet,
+    <<P as ProgramWithSubscription>::Renderer as iced_winit::Renderer>::Theme:
+        iced_winit::application::StyleSheet,
 {
     /// Creates a new [`State`] with the provided [`Program`], initializing its
     /// primitive with the given logical bounds and renderer.
@@ -134,7 +125,7 @@ where
         style: &renderer::Style,
         clipboard: &mut Clipboard,
         debug: &mut Debug,
-    ) -> (Vec<Event>, Option<Command<P::Message>>) {
+    ) -> Option<Command<P::Message>> {
         let mut user_interface = build_user_interface(
             &mut self.program,
             std::mem::take(&mut self.cache),
@@ -164,9 +155,23 @@ where
 
         self.queued_events.clear();
         messages.append(&mut self.queued_messages);
+
+        // we are forced to rebuild twice
+        // for now :^)
+        // because user_interface captures a mutable pointer to program, preventing us from running program methods
+        let temp_cache = user_interface.into_cache();
+
+        // process uncaptured events
+        let mut messages_from_uncaptured_events =
+            self.program.handle_uncaptured_events(uncaptured_events);
+        messages.append(&mut messages_from_uncaptured_events);
+
         debug.event_processing_finished();
 
         let command = if messages.is_empty() {
+            let mut user_interface =
+                build_user_interface(&mut self.program, temp_cache, renderer, bounds, debug);
+
             debug.draw_started();
             self.mouse_interaction = user_interface.draw(renderer, theme, style, cursor_position);
             debug.draw_finished();
@@ -175,10 +180,6 @@ where
 
             None
         } else {
-            // When there are messages, we are forced to rebuild twice
-            // for now :^)
-            let temp_cache = user_interface.into_cache();
-
             let commands = Command::batch(messages.into_iter().map(|message| {
                 debug.log_message(&message);
 
@@ -201,7 +202,7 @@ where
             Some(commands)
         };
 
-        (uncaptured_events, command)
+        command
     }
 
     /// Runs the actions of a [`Command`].
@@ -258,7 +259,8 @@ fn build_user_interface<'a, P: ProgramWithSubscription>(
     debug: &mut Debug,
 ) -> UserInterface<'a, P::Message, P::Renderer>
 where
-    <<P as ProgramWithSubscription>::Renderer as iced_winit::Renderer>::Theme: iced_winit::application::StyleSheet,
+    <<P as ProgramWithSubscription>::Renderer as iced_winit::Renderer>::Theme:
+        iced_winit::application::StyleSheet,
 {
     debug.view_started();
     let view = program.view();
@@ -286,7 +288,8 @@ fn run_command<P, E>(
 ) where
     P: ProgramWithSubscription,
     E: Executor,
-    <<P as ProgramWithSubscription>::Renderer as iced_winit::Renderer>::Theme: iced_winit::application::StyleSheet,
+    <<P as ProgramWithSubscription>::Renderer as iced_winit::Renderer>::Theme:
+        iced_winit::application::StyleSheet,
 {
     use iced_native::command;
     use iced_native::window;

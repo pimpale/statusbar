@@ -1,8 +1,9 @@
-mod program_runner;
 mod advanced_text_input;
+mod program_runner;
 mod todos;
 mod wm_hints;
 
+use iced_native::event;
 use todos::Todos;
 
 use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
@@ -21,9 +22,6 @@ use winit::{
 pub fn main() {
     env_logger::init();
 
-    // initialize app state
-    let todos = Todos::new();
-
     // Initialize winit
     let event_loop =
         EventLoopBuilder::<<Todos as program_runner::ProgramWithSubscription>::Message>::with_user_event().build();
@@ -38,6 +36,8 @@ pub fn main() {
     let physical_size = window.inner_size();
 
     let wm_state_mgr = wm_hints::create_state_mgr(&window).unwrap();
+    // initialize app state
+    let todos = Todos::new(wm_state_mgr);
 
     let mut viewport = Viewport::with_physical_size(
         Size::new(physical_size.width, physical_size.height),
@@ -124,14 +124,6 @@ pub fn main() {
                     WindowEvent::CursorMoved { position, .. } => {
                         cursor_position = position;
                     }
-                    WindowEvent::CursorEntered { .. } => {
-                        // grab keyboard focus on cursor enter
-                        wm_hints::grab_keyboard(&wm_state_mgr).unwrap();
-                    }
-                    WindowEvent::CursorLeft { .. } => {
-                        // release keyboard focus on cursor exit
-                        wm_hints::ungrab_keyboard(&wm_state_mgr).unwrap();
-                    }
                     WindowEvent::ModifiersChanged(new_modifiers) => {
                         modifiers = new_modifiers;
                     }
@@ -161,7 +153,7 @@ pub fn main() {
                 // If there are events pending
                 if !state.is_queue_empty() {
                     // We update iced
-                    let (_uncaptured_events, maybe_command) = state.update(
+                    let maybe_command = state.update(
                         viewport.logical_size(),
                         conversion::cursor_position(cursor_position, viewport.scale_factor()),
                         &mut renderer,
