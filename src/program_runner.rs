@@ -1,3 +1,4 @@
+use iced_native::{Element, Subscription};
 use iced_winit::widget::operation;
 // sourced from: https://github.com/iced-rs/iced/blob/master/native/src/program/state.rs
 use iced_winit::event::{self, Event};
@@ -5,14 +6,50 @@ use iced_winit::mouse;
 use iced_winit::renderer;
 use iced_winit::user_interface::{self, UserInterface};
 use iced_winit::{clipboard, conversion, winit, Executor, Proxy, Runtime};
-use iced_winit::{Clipboard, Command, Debug, Point, Program, Size};
+use iced_winit::{Clipboard, Command, Debug, Point, Size};
+
+pub trait ProgramWithSubscription {
+    /// The graphics backend to use to draw the [`Program`].
+    type Renderer: iced_winit::Renderer;
+
+    /// The type of __messages__ your [`Program`] will produce.
+    type Message: std::fmt::Debug + Send;
+
+    /// Handles a __message__ and updates the state of the [`Program`].
+    ///
+    /// This is where you define your __update logic__. All the __messages__,
+    /// produced by either user interactions or commands, will be handled by
+    /// this method.
+    ///
+    /// Any [`Command`] returned will be executed immediately in the
+    /// background by shells.
+    fn update(&mut self, message: Self::Message) -> Command<Self::Message>;
+
+    /// Returns the widgets to display in the [`Program`].
+    ///
+    /// These widgets can produce __messages__ based on user interaction.
+    fn view(&self) -> Element<'_, Self::Message, Self::Renderer>;
+
+    /// Returns the event `Subscription` for the current state of the
+    /// application.
+    ///
+    /// The messages produced by the `Subscription` will be handled by
+    /// [`update`](#tymethod.update).
+    ///
+    /// A `Subscription` will be kept alive as long as you keep returning it!
+    ///
+    /// By default, it returns an empty subscription.
+    fn subscription(&self) -> Subscription<Self::Message> {
+        Subscription::none()
+    }
+}
 
 /// The execution state of a [`Program`]. It leverages caching, event
 /// processing, and rendering primitive storage.
 #[allow(missing_debug_implementations)]
 pub struct State<P>
 where
-    P: Program + 'static,
+    P: ProgramWithSubscription + 'static,
 {
     program: P,
     cache: user_interface::Cache,
@@ -23,8 +60,8 @@ where
 
 impl<P> State<P>
 where
-    P: Program + 'static,
-    <<P as Program>::Renderer as iced_winit::Renderer>::Theme: iced_winit::application::StyleSheet,
+    P: ProgramWithSubscription + 'static,
+    <<P as ProgramWithSubscription>::Renderer as iced_winit::Renderer>::Theme: iced_winit::application::StyleSheet,
 {
     /// Creates a new [`State`] with the provided [`Program`], initializing its
     /// primitive with the given logical bounds and renderer.
@@ -213,7 +250,7 @@ where
     }
 }
 
-fn build_user_interface<'a, P: Program>(
+fn build_user_interface<'a, P: ProgramWithSubscription>(
     program: &'a mut P,
     cache: user_interface::Cache,
     renderer: &mut P::Renderer,
@@ -221,7 +258,7 @@ fn build_user_interface<'a, P: Program>(
     debug: &mut Debug,
 ) -> UserInterface<'a, P::Message, P::Renderer>
 where
-    <<P as Program>::Renderer as iced_winit::Renderer>::Theme: iced_winit::application::StyleSheet,
+    <<P as ProgramWithSubscription>::Renderer as iced_winit::Renderer>::Theme: iced_winit::application::StyleSheet,
 {
     debug.view_started();
     let view = program.view();
@@ -247,9 +284,9 @@ fn run_command<P, E>(
     debug: &mut Debug,
     window: &winit::window::Window,
 ) where
-    P: Program,
+    P: ProgramWithSubscription,
     E: Executor,
-    <<P as Program>::Renderer as iced_winit::Renderer>::Theme: iced_winit::application::StyleSheet,
+    <<P as ProgramWithSubscription>::Renderer as iced_winit::Renderer>::Theme: iced_winit::application::StyleSheet,
 {
     use iced_native::command;
     use iced_native::window;

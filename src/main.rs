@@ -26,7 +26,7 @@ pub fn main() {
 
     // Initialize winit
     let event_loop =
-        EventLoopBuilder::<<Todos as iced_winit::Program>::Message>::with_user_event().build();
+        EventLoopBuilder::<<Todos as program_runner::ProgramWithSubscription>::Message>::with_user_event().build();
 
     let window = winit::window::WindowBuilder::new()
         .with_x11_window_type(vec![XWindowType::Dock])
@@ -161,7 +161,7 @@ pub fn main() {
                 // If there are events pending
                 if !state.is_queue_empty() {
                     // We update iced
-                    let (uncaptured_events, maybe_command) = state.update(
+                    let (_uncaptured_events, maybe_command) = state.update(
                         viewport.logical_size(),
                         conversion::cursor_position(cursor_position, viewport.scale_factor()),
                         &mut renderer,
@@ -189,17 +189,6 @@ pub fn main() {
                             &mut proxy,
                             &mut debug,
                             &window,
-                        );
-                        state.update(
-                            viewport.logical_size(),
-                            conversion::cursor_position(cursor_position, viewport.scale_factor()),
-                            &mut renderer,
-                            &iced_wgpu::Theme::Dark,
-                            &renderer::Style {
-                                text_color: Color::WHITE,
-                            },
-                            &mut clipboard,
-                            &mut debug,
                         );
                     }
 

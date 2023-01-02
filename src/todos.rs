@@ -1,7 +1,7 @@
 use iced_winit::alignment;
 use iced_winit::widget::{button, column, container, row, scrollable, text};
 use iced_winit::{theme, Command, Length};
-use iced_winit::{Element, Program};
+use iced_winit::{Element};
 
 use iced_wgpu::Renderer;
 
@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 use crate::advanced_text_input;
+
+use crate::program_runner::ProgramWithSubscription;
 
 static INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
@@ -81,7 +83,7 @@ impl Todos {
     }
 }
 
-impl Program for Todos {
+impl ProgramWithSubscription for Todos {
     type Message = Message;
     type Renderer = Renderer;
 
@@ -150,6 +152,14 @@ impl Program for Todos {
                             if let Ok((i, j)) = sscanf::scanf!(val, "swp {} {}", usize, usize) {
                                 if i < state.live_tasks.len() && j < state.live_tasks.len() {
                                     state.live_tasks.swap(i, j);
+                                }
+                            } else if let Ok(i) = sscanf::scanf!(val, "swp {}", usize) {
+                                if i < state.live_tasks.len() {
+                                    state.live_tasks.swap(0, i);
+                                }
+                            } else if val == "swp" {
+                                if state.live_tasks.len() >= 2 {
+                                    state.live_tasks.swap(0, 1);
                                 }
                             }
                             Command::none()
