@@ -1,5 +1,3 @@
-use iced_native::command::Action;
-use iced_native::Subscription;
 use iced_winit::alignment;
 use iced_winit::widget::{button, column, container, row, scrollable, text};
 use iced_winit::Element;
@@ -10,7 +8,6 @@ use iced_wgpu::Renderer;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::time::Duration;
 
 use crate::advanced_text_input;
 use crate::wm_hints;
@@ -23,6 +20,7 @@ static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_
 #[derive(Debug)]
 pub struct Todos {
     wm_state: wm_hints::WmHintsState,
+    focused: bool,
     expanded: bool,
     state: State,
 }
@@ -80,15 +78,12 @@ pub enum Message {
     Yeet,
 }
 
-
-
-
-
 impl Todos {
     pub fn new(wm_state: wm_hints::WmHintsState) -> Todos {
         Todos {
             wm_state,
             expanded: false,
+            focused: false,
             // state: State::Loading,
             state: State::Loaded(LoadedState::default()),
         }
@@ -110,18 +105,22 @@ impl ProgramWithSubscription for Todos {
                     Command::none()
                 }
                 Message::EventOccurred(event) => {
-                    if self.expanded {
-                        match event {
-                            // grab keyboard focus on cursor enter
-                            iced_native::Event::Mouse(iced_native::mouse::Event::CursorEntered) => {
+                    match event {
+                        // grab keyboard focus on cursor enter
+                        iced_native::Event::Mouse(iced_native::mouse::Event::CursorEntered) => {
+                            if self.expanded && !self.focused {
                                 wm_hints::grab_keyboard(&self.wm_state).unwrap();
+                                self.focused = true;
                             }
-                            // release keyboard focus on cursor exit
-                            iced_native::Event::Mouse(iced_native::mouse::Event::CursorLeft) => {
-                                wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
-                            }
-                            _ => {}
                         }
+                        // release keyboard focus on cursor exit
+                        iced_native::Event::Mouse(iced_native::mouse::Event::CursorLeft) => {
+                            if self.expanded && self.focused {
+                                wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
+                                self.focused = false;
+                            }
+                        }
+                        _ => {}
                     }
                     Command::none()
                 }
@@ -131,7 +130,10 @@ impl ProgramWithSubscription for Todos {
                     state.active_index = None;
 
                     // release keyboard focus
-                    wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
+                    if self.focused {
+                        wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
+                        self.focused = false;
+                    }
 
                     iced_winit::window::resize(1, 50)
                 }
@@ -139,7 +141,10 @@ impl ProgramWithSubscription for Todos {
                     self.expanded = true;
 
                     // grab keyboard focus
-                    wm_hints::grab_keyboard(&self.wm_state).unwrap();
+                    if !self.focused {
+                        wm_hints::grab_keyboard(&self.wm_state).unwrap();
+                        self.focused = true;
+                    }
 
                     Command::batch([
                         iced_winit::window::resize(1, 250),
@@ -155,9 +160,18 @@ impl ProgramWithSubscription for Todos {
                     match val.split_once(" ").map(|x| x.0).unwrap_or(val.as_str()) {
                         "q" => {
                             self.expanded = false;
+                            state.input_value = String::new();
                             state.active_index = None;
+
+                            // release keyboard focus
+                            if self.focused {
+                                wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
+                                self.focused = false;
+                            }
+
                             iced_winit::window::resize(1, 50)
                         }
+                        "x" => panic!(),
                         "po" => {
                             if let Some(task) = state.live_tasks.pop_front() {
                                 state
