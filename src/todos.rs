@@ -1,3 +1,4 @@
+use futures_util::{Stream, Sink};
 use iced_winit::alignment;
 use iced_winit::widget::{button, column, container, row, scrollable, text};
 use iced_winit::Element;
@@ -7,6 +8,9 @@ use iced_wgpu::Renderer;
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpStream;
+use tokio_tungstenite::{WebSocketStream, tungstenite};
+use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
 use std::collections::VecDeque;
 
 use crate::advanced_text_input;
@@ -27,8 +31,9 @@ pub struct Todos {
 
 #[derive(Debug)]
 pub enum State {
-    Loading,
-    Loaded(LoadedState),
+    NotLoggedIn(NotLoggedInState),
+    NotConnected(NotConnectedState),
+    Connected(ConnectedState),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,20 +44,37 @@ pub enum TaskCompletionKind {
 }
 
 #[derive(Debug)]
-pub struct LoadedState {
+pub struct NotLoggedInState {
+    username: String,
+    password: String,
+    view_password: bool,
+    error: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct NotConnectedState {
+    api_key: String,
+    error: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ConnectedState {
+    api_key: String,
+    websocket_recv: Box<dyn Stream<Item = Result<tungstenite::protocol::Message, tungstenite::error::Error>> + Debug>,
+    websocket_send: Box<dyn Sink<tungstenite::protocol::Message, Error = tungstenite::error::Error>>,
     input_value: String,
     active_index: Option<usize>,
     live_tasks: VecDeque<String>,
     finished_tasks: Vec<(String, TaskCompletionKind)>,
 }
 
-impl Default for LoadedState {
+impl Default for NotLoggedInState {
     fn default() -> Self {
-        LoadedState {
-            input_value: String::new(),
-            active_index: None,
-            live_tasks: VecDeque::new(),
-            finished_tasks: Vec::new(),
+        NotLoggedInState {
+            username: String::new(),
+            password: String::new(),
+            view_password: false,
+            error: None,
         }
     }
 }

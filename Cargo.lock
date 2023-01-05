@@ -2370,6 +2370,7 @@ version = "0.1.0"
 dependencies = [
  "derivative",
  "env_logger",
+ "futures-util",
  "iced_futures",
  "iced_native",
  "iced_style",
@@ -2488,7 +2489,7 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 [[package]]
 name = "todoproxy-api"
 version = "0.0.1"
-source = "git+https://github.com/pimpale/todoproxy-api#8ac4f221185648492594fd9db90a17d5f8de0da0"
+source = "git+https://github.com/pimpale/todoproxy-api#19e245df7658365c5eef18deb00b4427f7408f06"
 dependencies = [
  "derive_more",
  "num-derive",
@@ -2499,9 +2500,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.23.0"
+version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eab6d665857cc6ca78d6e80303a02cea7a7851e85dfbd77cbdc09bd129f1ef46"
+checksum = "38a54aca0c15d014013256222ba0ebed095673f89345dd79119d912eb561b7a8"
 dependencies = [
  "autocfg",
  "bytes",
