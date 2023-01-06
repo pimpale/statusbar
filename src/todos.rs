@@ -1,9 +1,9 @@
 use derivative::Derivative;
 use futures_util::{FutureExt, Sink, SinkExt, Stream, TryFutureExt};
 use iced_native::command::Action;
+use iced_native::widget;
 use iced_winit::alignment;
 use iced_winit::widget::{button, column, container, row, scrollable, text};
-use iced_winit::winit::platform::unix::x11::ffi::{NorthWestGravity, XNQueryIMValuesList_0};
 use iced_winit::Element;
 use iced_winit::{theme, Command, Length};
 
@@ -14,9 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use todoproxy_api::request::WebsocketInitMessage;
 use todoproxy_api::{StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind};
-use tokio::net::TcpStream;
-use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
-use tokio_tungstenite::{tungstenite, WebSocketStream};
+use tokio_tungstenite::tungstenite;
 
 use crate::advanced_text_input;
 use crate::utils;
@@ -70,11 +68,13 @@ pub struct ConnectedState {
     #[derivative(Debug = "ignore")]
     websocket_recv: Box<
         dyn Stream<Item = Result<tungstenite::protocol::Message, tungstenite::error::Error>>
-            + Unpin + Send,
+            + Unpin
+            + Send,
     >,
     #[derivative(Debug = "ignore")]
-    websocket_send:
-        Box<dyn Sink<tungstenite::protocol::Message, Error = tungstenite::error::Error> + Unpin + Send>,
+    websocket_send: Box<
+        dyn Sink<tungstenite::protocol::Message, Error = tungstenite::error::Error> + Unpin + Send,
+    >,
     input_value: String,
     active_index: Option<usize>,
     snapshot: StateSnapshot,
@@ -263,7 +263,7 @@ impl ProgramWithSubscription for Todos {
                 }
                 Command::none()
             }
-            Message::SubmitInput=> match self.state {
+            Message::SubmitInput => match self.state {
                 State::Connected(state) => {
                     let val = std::mem::take(&mut state.input_value);
                     match val.split_once(" ").map(|x| x.0).unwrap_or(val.as_str()) {
@@ -292,7 +292,9 @@ impl ProgramWithSubscription for Todos {
                             Op::RestoreFinished,
                         ),
                         "mv" => {
-                            let op = if let Ok((i, j)) = sscanf::scanf!(val, "mv {} {}", usize, usize) {
+                            let op = if let Ok((i, j)) =
+                                sscanf::scanf!(val, "mv {} {}", usize, usize)
+                            {
                                 if i < state.snapshot.live.len() && j < state.snapshot.live.len() {
                                     Some(Op::Move(i, j))
                                 } else {
@@ -314,8 +316,10 @@ impl ProgramWithSubscription for Todos {
                                 None
                             };
                             match op {
-                                Some(op) => Self::wsop( &state.snapshot, &mut state.websocket_send, op, ),
-                                None => Command::none()
+                                Some(op) => {
+                                    Self::wsop(&state.snapshot, &mut state.websocket_send, op)
+                                }
+                                None => Command::none(),
                             }
                         }
                         _ => Self::wsop(
@@ -328,41 +332,77 @@ impl ProgramWithSubscription for Todos {
                 _ => Command::none(),
             },
             Message::EditActive(value) => {
-                state.state.live[state.active_index.unwrap()] = value;
-                Command::none()
-            }
-            Message::QueueActive => {
-                let value = state
-                    .live_tasks
-                    .remove(state.active_index.unwrap())
-                    .unwrap();
-                state.live_tasks.push_back(value);
-                state.active_index = Some(state.live_tasks.len() - 1);
-                Command::none()
-            }
-            Message::PopActive(kind) => {
-                let value = state
-                    .live_tasks
-                    .remove(state.active_index.unwrap())
-                    .unwrap();
-                state.finished_tasks.push((value, kind));
-                state.active_index = None;
-                Command::none()
-            }
-            Message::PopTopmost(kind) => {
-                if let Some(task) = state.live_tasks.pop_front() {
-                    state.finished_tasks.push((task, kind));
+                match self.state {
+                    State::Connected(state) => {
+                        state.snapshot.live[state.active_index.unwrap()].value = value;
+                    }
+                    _ => {}
                 }
                 Command::none()
             }
-            Message::SetActive(a) => {
-                state.active_index = a;
-                if a.is_some() {
-                    advanced_text_input::focus(ACTIVE_INPUT_ID.clone())
-                } else {
+            Message::SetActive(a) => match self.state {
+                State::Connected(state) => {
+                    let command = match state.active_index {
+                        Some(position) => Self::wsop(
+                            &state.snapshot,
+                            &mut state.websocket_send,
+                            Op::Edit(position, state.snapshot.live[position].value.clone()),
+                        ),
+                        None => Command::none(),
+                    };
+                    state.active_index = a;
+                    Command::batch([
+                        command,
+                        match a {
+                            Some(x) => advanced_text_input::focus(ACTIVE_INPUT_ID.clone()),
+                            None => Command::none(),
+                        },
+                    ])
+                }
+                _ => Command::none(),
+            },
+            Message::Op(op) => match self.state {
+                State::Connected(state) => {
+                    Self::wsop(&state.snapshot, &mut state.websocket_send, op)
+                }
+                _ => Command::none(),
+            },
+            Message::EditUsername(val) => match self.state {
+                State::NotLoggedIn(state) => {
+                    state.username = val;
                     Command::none()
                 }
-            }
+                _ => Command::none(),
+            },
+            Message::SubmitUsername => match self.state {
+                State::NotLoggedIn(state) => Command::single(Action::Widget(widget::Action::new(
+                    widget::operation::focusable::focus_next(),
+                ))),
+                _ => Command::none(),
+            },
+            Message::EditPassword(val) => match self.state {
+                State::NotLoggedIn(state) => {
+                    state.password = val;
+                    Command::none()
+                }
+                _ => Command::none(),
+            },
+            Message::SubmitPassword => match self.state {
+                State::NotLoggedIn(state) => Command::single(Action::Widget(widget::Action::new(
+                    widget::operation::focusable::focus_next(),
+                ))),
+                _ => Command::none(),
+            },
+            Message::TogglePasswordView => match self.state {
+                State::NotLoggedIn(state) => {
+                    state.view_password = !state.view_password;
+                    Command::none()
+                }
+                _ => Command::none()
+                },
+            Message::RetryConnect => todo!(),
+            Message::WebsocketSendComplete(result) => todo!(),
+            Message::WebsocketRecvComplete(_) => todo!(),
         }
     }
 
@@ -410,9 +450,10 @@ impl ProgramWithSubscription for Todos {
                                         header.into(),
                                         button("Task Succeeded")
                                             .style(theme::Button::Positive)
-                                            .on_press(Message::PopActive(
-                                                TaskCompletionKind::Success,
-                                            ))
+                                            .on_press(Message::Op(Op::Pop(
+                                                i,
+                                                TaskStatus::Succeeded,
+                                            )))
                                             .into(),
                                         advanced_text_input::AdvancedTextInput::new(
                                             "Edit Task",
@@ -424,15 +465,14 @@ impl ProgramWithSubscription for Todos {
                                         .into(),
                                         button("Task Failed")
                                             .style(theme::Button::Destructive)
-                                            .on_press(Message::PopActive(
-                                                TaskCompletionKind::Failure,
-                                            ))
+                                            .on_press(Message::Op(Op::Pop(i, TaskStatus::Failed)))
                                             .into(),
                                         button("Task Obsoleted")
                                             .style(theme::Button::Secondary)
-                                            .on_press(Message::PopActive(
-                                                TaskCompletionKind::Obsoleted,
-                                            ))
+                                            .on_press(Message::Op(Op::Pop(
+                                                i,
+                                                TaskStatus::Obsoleted,
+                                            )))
                                             .into(),
                                     ])
                                     .spacing(10)
