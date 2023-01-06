@@ -1,7 +1,12 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use auth_service_api::request::ApiKeyNewWithEmailProps;
+use auth_service_api::response::{ApiKey, AuthError};
 use derivative::Derivative;
 use futures_util::{FutureExt, Sink, SinkExt, Stream, TryFutureExt};
 use iced_native::command::Action;
-use iced_native::widget;
+use iced_native::{widget, Color};
 use iced_winit::alignment;
 use iced_winit::widget::{button, column, container, row, scrollable, text};
 use iced_winit::Element;
@@ -10,27 +15,28 @@ use iced_winit::{theme, Command, Length};
 use iced_wgpu::Renderer;
 
 use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+
 use todoproxy_api::request::WebsocketInitMessage;
-use todoproxy_api::{StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind};
+use todoproxy_api::{LiveTask, StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind};
+use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite;
 
 use crate::advanced_text_input;
+use crate::program_runner::ProgramWithSubscription;
 use crate::utils;
 use crate::wm_hints;
 
-use crate::program_runner::ProgramWithSubscription;
-
-// username and password text boxes
-static USERNAME_INPUT_ID: Lazy<advanced_text_input::Id> =
-    Lazy::new(advanced_text_input::Id::unique);
+// username and password text .valueboxes
+static EMAIL_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 static PASSWORD_INPUT_ID: Lazy<advanced_text_input::Id> =
     Lazy::new(advanced_text_input::Id::unique);
 
 // logged in boxes
 static INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
+
+static AUTH_URL: &str = "http://localhost:7080/public";
+static TODOPROXY_URL: &str = "http://localhost:7080/";
 
 #[derive(Debug)]
 pub struct Todos {
@@ -49,7 +55,7 @@ pub enum State {
 
 #[derive(Debug)]
 pub struct NotLoggedInState {
-    username: String,
+    email: String,
     password: String,
     view_password: bool,
     error: Option<String>,
@@ -66,24 +72,72 @@ pub struct NotConnectedState {
 pub struct ConnectedState {
     api_key: String,
     #[derivative(Debug = "ignore")]
-    websocket_recv: Box<
-        dyn Stream<Item = Result<tungstenite::protocol::Message, tungstenite::error::Error>>
-            + Unpin
-            + Send,
+    websocket_recv: Arc<
+        Mutex<
+            dyn Stream<Item = Result<tungstenite::protocol::Message, tungstenite::error::Error>>
+                + Unpin
+                + Send,
+        >,
     >,
     #[derivative(Debug = "ignore")]
-    websocket_send: Box<
-        dyn Sink<tungstenite::protocol::Message, Error = tungstenite::error::Error> + Unpin + Send,
+    websocket_send: Arc<
+        Mutex<
+            dyn Sink<tungstenite::protocol::Message, Error = tungstenite::error::Error>
+                + Unpin
+                + Send,
+        >,
     >,
     input_value: String,
     active_index: Option<usize>,
     snapshot: StateSnapshot,
 }
 
+impl ConnectedState {
+    // creates a command from an operation
+    // (operation must be valid)
+    fn wsop(&self, op: Op) -> Command<Message> {
+        // create op
+        let wsop = WebsocketOp {
+            alleged_time: utils::current_time_millis(),
+            kind: match op {
+                Op::NewLive(value, position) => WebsocketOpKind::InsLiveTask {
+                    value,
+                    id: utils::random_string(),
+                    position,
+                },
+                Op::RestoreFinished => WebsocketOpKind::RestoreFinishedTask {
+                    id: self.snapshot.finished.first().unwrap().id.clone(),
+                },
+                Op::Pop(position, status) => WebsocketOpKind::FinishLiveTask {
+                    id: self.snapshot.live[position].id.clone(),
+                    status,
+                },
+                Op::Edit(position, value) => WebsocketOpKind::EditLiveTask {
+                    id: self.snapshot.live[position].id.clone(),
+                    value,
+                },
+                Op::Move(del, ins) => WebsocketOpKind::MvLiveTask {
+                    id_del: self.snapshot.live[del].id.clone(),
+                    id_ins: self.snapshot.live[ins].id.clone(),
+                },
+            },
+        };
+
+        let sink = self.websocket_send.clone();
+        let msg = tungstenite::protocol::Message::Text(serde_json::to_string(&wsop).unwrap());
+
+        Command::single(Action::Future(Box::pin(async move {
+            Message::WebsocketSendComplete(
+                sink.lock().await.feed(msg).await.map_err(|e| e.to_string()),
+            )
+        })))
+    }
+}
+
 impl Default for NotLoggedInState {
     fn default() -> Self {
         NotLoggedInState {
-            username: String::new(),
+            email: String::new(),
             password: String::new(),
             view_password: false,
             error: None,
@@ -102,12 +156,14 @@ pub enum Message {
     CollapseDock,
 
     // not logged in page
-    EditUsername(String),
-    SubmitUsername,
+    EditEmail(String),
+    SubmitEmail,
     EditPassword(String),
     SubmitPassword,
     TogglePasswordView,
-
+    AttemptLogin,
+    LoginAttemptComplete(Result<ApiKey, String>),
+    ConnectAttemptComplete(Result<
     // not connected page
     RetryConnect,
     // connected page
@@ -141,50 +197,6 @@ impl Todos {
             // state: State::Loading,
             state: State::NotLoggedIn(NotLoggedInState::default()),
         }
-    }
-
-    // creates a command from an operation
-    // (operation must be valid)
-    fn wsop<S>(state: &StateSnapshot, sink: &mut S, op: Op) -> Command<Message>
-    where
-        S: Sink<tungstenite::protocol::Message, Error = tungstenite::error::Error> + Unpin + Send,
-    {
-        // create op
-        let wsop = WebsocketOp {
-            alleged_time: utils::current_time_millis(),
-            kind: match op {
-                Op::NewLive(value, position) => WebsocketOpKind::InsLiveTask {
-                    value,
-                    id: utils::random_string(),
-                    position,
-                },
-                Op::RestoreFinished => WebsocketOpKind::RestoreFinishedTask {
-                    id: state.finished.first().unwrap().id.clone(),
-                },
-                Op::Pop(position, status) => WebsocketOpKind::FinishLiveTask {
-                    id: state.live[position].id.clone(),
-                    status,
-                },
-                Op::Edit(position, value) => WebsocketOpKind::EditLiveTask {
-                    id: state.live[position].id.clone(),
-                    value,
-                },
-                Op::Move(del, ins) => WebsocketOpKind::MvLiveTask {
-                    id_del: state.live[del].id.clone(),
-                    id_ins: state.live[ins].id.clone(),
-                },
-            },
-        };
-
-        // send op
-        let future = sink
-            .feed(tungstenite::protocol::Message::Text(
-                serde_json::to_string(&wsop).unwrap(),
-            ))
-            .map_err(|e| e.to_string())
-            .map(Message::WebsocketSendComplete);
-
-        Command::single(Action::Future(Box::pin(future)))
     }
 }
 
@@ -233,7 +245,7 @@ impl ProgramWithSubscription for Todos {
                 }
 
                 let command = match self.state {
-                    State::Connected(state) => advanced_text_input::focus(INPUT_ID.clone()),
+                    State::Connected(_) => advanced_text_input::focus(INPUT_ID.clone()),
                     _ => Command::none(),
                 };
 
@@ -245,7 +257,7 @@ impl ProgramWithSubscription for Todos {
                     wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
                 }
                 match self.state {
-                    State::Connected(state) => {
+                    State::Connected(ref mut state) => {
                         state.input_value = String::new();
                         state.active_index = None;
                     }
@@ -256,7 +268,7 @@ impl ProgramWithSubscription for Todos {
             }
             Message::EditInput(value) => {
                 match self.state {
-                    State::Connected(state) => {
+                    State::Connected(ref mut state) => {
                         state.input_value = value;
                     }
                     _ => {}
@@ -264,76 +276,48 @@ impl ProgramWithSubscription for Todos {
                 Command::none()
             }
             Message::SubmitInput => match self.state {
-                State::Connected(state) => {
+                State::Connected(ref mut state) => {
                     let val = std::mem::take(&mut state.input_value);
                     match val.split_once(" ").map(|x| x.0).unwrap_or(val.as_str()) {
                         "q" => Command::single(Action::Future(Box::pin(async {
                             Message::CollapseDock
                         }))),
                         "x" => panic!(),
-                        "ps" => Self::wsop(
-                            &state.snapshot,
-                            &mut state.websocket_send,
-                            Op::Pop(0, TaskStatus::Succeeded),
-                        ),
-                        "pf" => Self::wsop(
-                            &state.snapshot,
-                            &mut state.websocket_send,
-                            Op::Pop(0, TaskStatus::Failed),
-                        ),
-                        "po" => Self::wsop(
-                            &state.snapshot,
-                            &mut state.websocket_send,
-                            Op::Pop(0, TaskStatus::Obsoleted),
-                        ),
-                        "r" => Self::wsop(
-                            &state.snapshot,
-                            &mut state.websocket_send,
-                            Op::RestoreFinished,
-                        ),
+                        "ps" => state.wsop(Op::Pop(0, TaskStatus::Succeeded)),
+                        "pf" => state.wsop(Op::Pop(0, TaskStatus::Failed)),
+                        "po" => state.wsop(Op::Pop(0, TaskStatus::Obsoleted)),
+                        "r" => state.wsop(Op::RestoreFinished),
                         "mv" => {
-                            let op = if let Ok((i, j)) =
-                                sscanf::scanf!(val, "mv {} {}", usize, usize)
-                            {
+                            if let Ok((i, j)) = sscanf::scanf!(val, "mv {} {}", usize, usize) {
                                 if i < state.snapshot.live.len() && j < state.snapshot.live.len() {
-                                    Some(Op::Move(i, j))
+                                    state.wsop(Op::Move(i, j))
                                 } else {
-                                    None
+                                    Command::none()
                                 }
                             } else if let Ok(i) = sscanf::scanf!(val, "mv {}", usize) {
                                 if i < state.snapshot.live.len() {
-                                    Some(Op::Move(i, 0))
+                                    state.wsop(Op::Move(i, 0))
                                 } else {
-                                    None
+                                    Command::none()
                                 }
                             } else if val == "mv" {
                                 if state.snapshot.live.len() >= 2 {
-                                    Some(Op::Move(0, 1))
+                                    state.wsop(Op::Move(0, 1))
                                 } else {
-                                    None
+                                    Command::none()
                                 }
                             } else {
-                                None
-                            };
-                            match op {
-                                Some(op) => {
-                                    Self::wsop(&state.snapshot, &mut state.websocket_send, op)
-                                }
-                                None => Command::none(),
+                                Command::none()
                             }
                         }
-                        _ => Self::wsop(
-                            &state.snapshot,
-                            &mut state.websocket_send,
-                            Op::NewLive(val, 0),
-                        ),
+                        _ => state.wsop(Op::NewLive(val, 0)),
                     }
                 }
                 _ => Command::none(),
             },
             Message::EditActive(value) => {
                 match self.state {
-                    State::Connected(state) => {
+                    State::Connected(ref mut state) => {
                         state.snapshot.live[state.active_index.unwrap()].value = value;
                     }
                     _ => {}
@@ -341,20 +325,19 @@ impl ProgramWithSubscription for Todos {
                 Command::none()
             }
             Message::SetActive(a) => match self.state {
-                State::Connected(state) => {
+                State::Connected(ref mut state) => {
                     let command = match state.active_index {
-                        Some(position) => Self::wsop(
-                            &state.snapshot,
-                            &mut state.websocket_send,
-                            Op::Edit(position, state.snapshot.live[position].value.clone()),
-                        ),
+                        Some(position) => state.wsop(Op::Edit(
+                            position,
+                            state.snapshot.live[position].value.clone(),
+                        )),
                         None => Command::none(),
                     };
                     state.active_index = a;
                     Command::batch([
                         command,
                         match a {
-                            Some(x) => advanced_text_input::focus(ACTIVE_INPUT_ID.clone()),
+                            Some(_) => advanced_text_input::focus(ACTIVE_INPUT_ID.clone()),
                             None => Command::none(),
                         },
                     ])
@@ -362,46 +345,94 @@ impl ProgramWithSubscription for Todos {
                 _ => Command::none(),
             },
             Message::Op(op) => match self.state {
-                State::Connected(state) => {
-                    Self::wsop(&state.snapshot, &mut state.websocket_send, op)
-                }
+                State::Connected(ref mut state) => state.wsop(op),
                 _ => Command::none(),
             },
-            Message::EditUsername(val) => match self.state {
-                State::NotLoggedIn(state) => {
-                    state.username = val;
+            Message::EditEmail(val) => match self.state {
+                State::NotLoggedIn(ref mut state) => {
+                    state.email = val;
+                    state.error = None;
                     Command::none()
                 }
                 _ => Command::none(),
             },
-            Message::SubmitUsername => match self.state {
-                State::NotLoggedIn(state) => Command::single(Action::Widget(widget::Action::new(
+            Message::SubmitEmail => match self.state {
+                State::NotLoggedIn(_) => Command::single(Action::Widget(widget::Action::new(
                     widget::operation::focusable::focus_next(),
                 ))),
                 _ => Command::none(),
             },
             Message::EditPassword(val) => match self.state {
-                State::NotLoggedIn(state) => {
+                State::NotLoggedIn(ref mut state) => {
                     state.password = val;
+                    state.error = None;
                     Command::none()
                 }
                 _ => Command::none(),
             },
             Message::SubmitPassword => match self.state {
-                State::NotLoggedIn(state) => Command::single(Action::Widget(widget::Action::new(
+                State::NotLoggedIn(_) => Command::single(Action::Widget(widget::Action::new(
                     widget::operation::focusable::focus_next(),
                 ))),
                 _ => Command::none(),
             },
             Message::TogglePasswordView => match self.state {
-                State::NotLoggedIn(state) => {
+                State::NotLoggedIn(ref mut state) => {
                     state.view_password = !state.view_password;
                     Command::none()
                 }
-                _ => Command::none()
-                },
+                _ => Command::none(),
+            },
+            Message::AttemptLogin => match self.state {
+                State::NotLoggedIn(ref state) => {
+                    let auth_base_url = String::from(AUTH_URL);
+                    let email = state.email.clone();
+                    let password = state.password.clone();
+                    let duration = Duration::from_secs(24 * 60 * 60).as_millis() as i64;
+                    Command::single(Action::Future(Box::pin(async move {
+                        Message::LoginAttemptComplete(
+                            api_key_new_with_email(auth_base_url, email, password, duration)
+                                .await
+                                .map_err(|e| e.to_string()),
+                        )
+                    })))
+                }
+                _ => Command::none(),
+            },
+            Message::LoginAttemptComplete(res) => match self.state {
+                State::NotLoggedIn(ref mut state) => {
+                    match res {
+                        // if ok then transition state to NotConnected and try to
+                        Ok(ApiKey {
+                            key: Some(api_key), ..
+                        }) => {
+                            self.state = State::NotConnected(NotConnectedState {
+                                api_key,
+                                error: None,
+                            });
+
+                            // we need to now try to initialize the websocket connection
+                            Action::Future(async {
+                                tokio_tungstenite::connect_async(format!("{}/ws/task_updates", TODOPROXY_URL))
+                            }
+                            )
+
+                            Command::none()
+                        }
+                        Ok(_) => {
+                            state.error = Some(String::from("No ApiKey returned"));
+                            Command::none()
+                        }
+                        Err(e) => {
+                            state.error = Some(e);
+                            Command::none()
+                        }
+                    }
+                }
+                _ => Command::none(),
+            },
             Message::RetryConnect => todo!(),
-            Message::WebsocketSendComplete(result) => todo!(),
+            Message::WebsocketSendComplete(_) => todo!(),
             Message::WebsocketRecvComplete(_) => todo!(),
         }
     }
@@ -409,9 +440,10 @@ impl ProgramWithSubscription for Todos {
     fn view(&self) -> Element<Message, Renderer> {
         match self {
             Self {
-                state: State::Loading,
+                state: State::NotLoggedIn(_),
+                expanded: false,
                 ..
-            } => container(text("Loading...").size(30))
+            } => container(button("Click to Log In").on_press(Message::ExpandDock))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .center_x()
@@ -419,9 +451,106 @@ impl ProgramWithSubscription for Todos {
                 .into(),
             Self {
                 state:
-                    State::Loaded(LoadedState {
+                    State::NotLoggedIn(NotLoggedInState {
+                        email,
+                        password,
+                        view_password,
+                        error,
+                    }),
+                expanded: true,
+                ..
+            } => {
+                let email_input =
+                    advanced_text_input::AdvancedTextInput::new("Email", email, Message::EditEmail)
+                        .id(EMAIL_INPUT_ID.clone())
+                        .on_submit(Message::SubmitEmail);
+
+                let mut password_input = advanced_text_input::AdvancedTextInput::new(
+                    "Password",
+                    password,
+                    Message::EditPassword,
+                )
+                .id(PASSWORD_INPUT_ID.clone())
+                .on_submit(Message::SubmitPassword);
+
+                if !view_password {
+                    password_input = password_input.password();
+                }
+
+                let error = match error {
+                    Some(error) => text(error).style(Color::from([1.0, 0.0, 0.0])),
+                    None => text(""),
+                };
+
+                let submit_button = button("Submit").on_press(Message::AttemptLogin);
+
+                row(vec![
+                    button("Collapse").on_press(Message::CollapseDock).into(),
+                    column(vec![
+                        email_input.into(),
+                        password_input.into(),
+                        submit_button.into(),
+                        error.into(),
+                    ])
+                    .spacing(10)
+                    .width(Length::Shrink)
+                    .into(),
+                ])
+                .spacing(10)
+                .padding(10)
+                .into()
+            }
+            Self {
+                state: State::Connected(ConnectedState { snapshot, .. }),
+                expanded: false,
+                ..
+            } => match snapshot.live.front() {
+                None => container(button("Click to Add Task").on_press(Message::ExpandDock))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x()
+                    .center_y()
+                    .padding(10)
+                    .into(),
+                Some(LiveTask { value, .. }) => container(
+                    row(vec![
+                        button("Task Succeeded")
+                            .height(Length::Fill)
+                            .style(theme::Button::Positive)
+                            .on_press(Message::Op(Op::Pop(0, TaskStatus::Succeeded)))
+                            .into(),
+                        button(text(value).horizontal_alignment(alignment::Horizontal::Center))
+                            .height(Length::Fill)
+                            .width(Length::Fill)
+                            .style(theme::Button::Text)
+                            .on_press(Message::ExpandDock)
+                            .into(),
+                        button("Task Failed")
+                            .height(Length::Fill)
+                            .style(theme::Button::Destructive)
+                            .on_press(Message::Op(Op::Pop(0, TaskStatus::Failed)))
+                            .into(),
+                        button("Task Obsoleted")
+                            .height(Length::Fill)
+                            .style(theme::Button::Secondary)
+                            .on_press(Message::Op(Op::Pop(0, TaskStatus::Obsoleted)))
+                            .into(),
+                    ])
+                    .height(Length::Fill)
+                    .spacing(10),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x()
+                .center_y()
+                .padding(10)
+                .into(),
+            },
+            Self {
+                state:
+                    State::Connected(ConnectedState {
                         input_value,
-                        live_tasks,
+                        snapshot: StateSnapshot { live, finished },
                         active_index,
                         ..
                     }),
@@ -435,12 +564,11 @@ impl ProgramWithSubscription for Todos {
                 )
                 .id(INPUT_ID.clone())
                 .on_focus(Message::SetActive(None))
-                .on_submit(Message::PushInput);
+                .on_submit(Message::SubmitInput);
 
-                let tasks: Element<_, Renderer> = if live_tasks.len() > 0 {
+                let tasks: Element<_, Renderer> = if live.len() > 0 {
                     column(
-                        live_tasks
-                            .iter()
+                        live.iter()
                             .enumerate()
                             .map(|(i, task)| {
                                 let header = text(format!("{}|", i)).size(25);
@@ -457,7 +585,7 @@ impl ProgramWithSubscription for Todos {
                                             .into(),
                                         advanced_text_input::AdvancedTextInput::new(
                                             "Edit Task",
-                                            task,
+                                            &task.value,
                                             Message::EditActive,
                                         )
                                         .id(ACTIVE_INPUT_ID.clone())
@@ -479,7 +607,7 @@ impl ProgramWithSubscription for Todos {
                                     .into(),
                                     _ => row(vec![
                                         header.into(),
-                                        button(text(&task))
+                                        button(text(&task.value))
                                             .on_press(Message::SetActive(Some(i)))
                                             .style(theme::Button::Text)
                                             .width(Length::Fill)
@@ -509,56 +637,35 @@ impl ProgramWithSubscription for Todos {
                 .padding(10)
                 .into()
             }
-            Self {
-                state: State::Loaded(LoadedState { live_tasks, .. }),
-                expanded: false,
-                ..
-            } => match live_tasks.front() {
-                None => container(button("Click to Add Task").on_press(Message::ExpandDock))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x()
-                    .center_y()
-                    .padding(10)
-                    .into(),
-                Some(task) => container(
-                    row(vec![
-                        button("Task Succeeded")
-                            .height(Length::Fill)
-                            .style(theme::Button::Positive)
-                            .on_press(Message::PopTopmost(TaskCompletionKind::Success))
-                            .into(),
-                        button(text(task).horizontal_alignment(alignment::Horizontal::Center))
-                            .height(Length::Fill)
-                            .width(Length::Fill)
-                            .style(theme::Button::Text)
-                            .on_press(Message::ExpandDock)
-                            .into(),
-                        button("Task Failed")
-                            .height(Length::Fill)
-                            .style(theme::Button::Destructive)
-                            .on_press(Message::PopTopmost(TaskCompletionKind::Failure))
-                            .into(),
-                        button("Task Obsoleted")
-                            .height(Length::Fill)
-                            .style(theme::Button::Secondary)
-                            .on_press(Message::PopTopmost(TaskCompletionKind::Obsoleted))
-                            .into(),
-                    ])
-                    .height(Length::Fill)
-                    .spacing(10),
-                )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center_x()
-                .center_y()
-                .padding(10)
-                .into(),
-            },
         }
     }
 
     fn handle_uncaptured_events(&self, events: Vec<iced_native::Event>) -> Vec<Self::Message> {
         events.into_iter().map(Message::EventOccurred).collect()
+    }
+}
+
+async fn api_key_new_with_email(
+    auth_base_url: String,
+    email: String,
+    password: String,
+    duration: i64,
+) -> Result<ApiKey, AuthError> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api_key/new_with_email", auth_base_url))
+        .json(&ApiKeyNewWithEmailProps {
+            email,
+            password,
+            duration,
+        })
+        .send()
+        .await
+        .map_err(|_| AuthError::Network)?;
+
+    if resp.status().as_u16() == 200 {
+        Ok(resp.json().await.map_err(|_| AuthError::DecodeError)?)
+    } else {
+        Err(resp.json().await.map_err(|_| AuthError::DecodeError)?)
     }
 }
