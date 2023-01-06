@@ -2378,6 +2378,7 @@ dependencies = [
  "iced_winit",
  "log",
  "once_cell",
+ "rand",
  "serde",
  "serde_json",
  "sscanf",
@@ -2489,7 +2490,7 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 [[package]]
 name = "todoproxy-api"
 version = "0.0.1"
-source = "git+https://github.com/pimpale/todoproxy-api#19e245df7658365c5eef18deb00b4427f7408f06"
+source = "git+https://github.com/pimpale/todoproxy-api#1457376fde9d8ae46a61782bf787a49d52ea03e2"
 dependencies = [
  "derive_more",
  "num-derive",
@@ -2500,9 +2501,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.23.1"
+version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38a54aca0c15d014013256222ba0ebed095673f89345dd79119d912eb561b7a8"
+checksum = "7125661431c26622a80ca5051a2f936c9a678318e0351007b0cc313143024e5c"
 dependencies = [
  "autocfg",
  "bytes",

@@ -1,6 +1,9 @@
-use futures_util::{Stream, Sink};
+use derivative::Derivative;
+use futures_util::{FutureExt, Sink, SinkExt, Stream, TryFutureExt};
+use iced_native::command::Action;
 use iced_winit::alignment;
 use iced_winit::widget::{button, column, container, row, scrollable, text};
+use iced_winit::winit::platform::unix::x11::ffi::{NorthWestGravity, XNQueryIMValuesList_0};
 use iced_winit::Element;
 use iced_winit::{theme, Command, Length};
 
@@ -8,16 +11,26 @@ use iced_wgpu::Renderer;
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpStream;
-use tokio_tungstenite::{WebSocketStream, tungstenite};
-use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
 use std::collections::VecDeque;
+use todoproxy_api::request::WebsocketInitMessage;
+use todoproxy_api::{StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind};
+use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
+use tokio_tungstenite::{tungstenite, WebSocketStream};
 
 use crate::advanced_text_input;
+use crate::utils;
 use crate::wm_hints;
 
 use crate::program_runner::ProgramWithSubscription;
 
+// username and password text boxes
+static USERNAME_INPUT_ID: Lazy<advanced_text_input::Id> =
+    Lazy::new(advanced_text_input::Id::unique);
+static PASSWORD_INPUT_ID: Lazy<advanced_text_input::Id> =
+    Lazy::new(advanced_text_input::Id::unique);
+
+// logged in boxes
 static INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 
@@ -36,13 +49,6 @@ pub enum State {
     Connected(ConnectedState),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TaskCompletionKind {
-    Success,
-    Failure,
-    Obsoleted,
-}
-
 #[derive(Debug)]
 pub struct NotLoggedInState {
     username: String,
@@ -57,15 +63,21 @@ pub struct NotConnectedState {
     error: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct ConnectedState {
     api_key: String,
-    websocket_recv: Box<dyn Stream<Item = Result<tungstenite::protocol::Message, tungstenite::error::Error>> + Debug>,
-    websocket_send: Box<dyn Sink<tungstenite::protocol::Message, Error = tungstenite::error::Error>>,
+    #[derivative(Debug = "ignore")]
+    websocket_recv: Box<
+        dyn Stream<Item = Result<tungstenite::protocol::Message, tungstenite::error::Error>>
+            + Unpin + Send,
+    >,
+    #[derivative(Debug = "ignore")]
+    websocket_send:
+        Box<dyn Sink<tungstenite::protocol::Message, Error = tungstenite::error::Error> + Unpin + Send>,
     input_value: String,
     active_index: Option<usize>,
-    live_tasks: VecDeque<String>,
-    finished_tasks: Vec<(String, TaskCompletionKind)>,
+    snapshot: StateSnapshot,
 }
 
 impl Default for NotLoggedInState {
@@ -82,22 +94,42 @@ impl Default for NotLoggedInState {
 #[derive(Debug, Clone)]
 pub enum Message {
     EventOccurred(iced_native::Event),
+    // Focus
+    FocusDock,
+    UnfocusDock,
     // change dock
     ExpandDock,
     CollapseDock,
-    // operations performed on the input_value
+
+    // not logged in page
+    EditUsername(String),
+    SubmitUsername,
+    EditPassword(String),
+    SubmitPassword,
+    TogglePasswordView,
+
+    // not connected page
+    RetryConnect,
+    // connected page
     EditInput(String),
-    PushInput,
-    QueueInput,
-    // operations performed on the currently active index
+    SubmitInput,
     EditActive(String),
-    QueueActive,
-    PopActive(TaskCompletionKind),
-    // operations on the topmost value
-    PopTopmost(TaskCompletionKind),
-    // set active
     SetActive(Option<usize>),
+    Op(Op),
+    // Websocket Interactions
+    WebsocketSendComplete(Result<(), String>),
+    WebsocketRecvComplete(Result<WebsocketOp, String>),
+    // debugging
     Yeet,
+}
+
+#[derive(Debug, Clone)]
+pub enum Op {
+    NewLive(String, usize),
+    RestoreFinished,
+    Pop(usize, TaskStatus),
+    Edit(usize, String),
+    Move(usize, usize),
 }
 
 impl Todos {
@@ -107,8 +139,52 @@ impl Todos {
             expanded: false,
             focused: false,
             // state: State::Loading,
-            state: State::Loaded(LoadedState::default()),
+            state: State::NotLoggedIn(NotLoggedInState::default()),
         }
+    }
+
+    // creates a command from an operation
+    // (operation must be valid)
+    fn wsop<S>(state: &StateSnapshot, sink: &mut S, op: Op) -> Command<Message>
+    where
+        S: Sink<tungstenite::protocol::Message, Error = tungstenite::error::Error> + Unpin + Send,
+    {
+        // create op
+        let wsop = WebsocketOp {
+            alleged_time: utils::current_time_millis(),
+            kind: match op {
+                Op::NewLive(value, position) => WebsocketOpKind::InsLiveTask {
+                    value,
+                    id: utils::random_string(),
+                    position,
+                },
+                Op::RestoreFinished => WebsocketOpKind::RestoreFinishedTask {
+                    id: state.finished.first().unwrap().id.clone(),
+                },
+                Op::Pop(position, status) => WebsocketOpKind::FinishLiveTask {
+                    id: state.live[position].id.clone(),
+                    status,
+                },
+                Op::Edit(position, value) => WebsocketOpKind::EditLiveTask {
+                    id: state.live[position].id.clone(),
+                    value,
+                },
+                Op::Move(del, ins) => WebsocketOpKind::MvLiveTask {
+                    id_del: state.live[del].id.clone(),
+                    id_ins: state.live[ins].id.clone(),
+                },
+            },
+        };
+
+        // send op
+        let future = sink
+            .feed(tungstenite::protocol::Message::Text(
+                serde_json::to_string(&wsop).unwrap(),
+            ))
+            .map_err(|e| e.to_string())
+            .map(Message::WebsocketSendComplete);
+
+        Command::single(Action::Future(Box::pin(future)))
     }
 }
 
@@ -116,180 +192,177 @@ impl ProgramWithSubscription for Todos {
     type Message = Message;
     type Renderer = Renderer;
 
-    // the cringe runner doesn't actually run crap - check main for what actually does happen
-    // "cross platform" when anyone needs to hook in platform-specifc stuff for each plaform is pain
     fn update(&mut self, message: Message) -> Command<Message> {
-        match &mut self.state {
-            State::Loading => Command::none(),
-            State::Loaded(state) => match message {
-                Message::Yeet => {
-                    println!("yeet");
-                    Command::none()
+        match message {
+            Message::Yeet => {
+                println!("yeet");
+                Command::none()
+            }
+            Message::EventOccurred(event) => match event {
+                // grab keyboard focus on cursor enter
+                iced_native::Event::Mouse(iced_native::mouse::Event::CursorEntered) => {
+                    Command::single(Action::Future(Box::pin(async { Message::FocusDock })))
                 }
-                Message::EventOccurred(event) => {
-                    match event {
-                        // grab keyboard focus on cursor enter
-                        iced_native::Event::Mouse(iced_native::mouse::Event::CursorEntered) => {
-                            if self.expanded && !self.focused {
-                                wm_hints::grab_keyboard(&self.wm_state).unwrap();
-                                self.focused = true;
-                            }
-                        }
-                        // release keyboard focus on cursor exit
-                        iced_native::Event::Mouse(iced_native::mouse::Event::CursorLeft) => {
-                            if self.expanded && self.focused {
-                                wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
-                                self.focused = false;
-                            }
-                        }
-                        _ => {}
+                // release keyboard focus on cursor exit
+                iced_native::Event::Mouse(iced_native::mouse::Event::CursorLeft) => {
+                    Command::single(Action::Future(Box::pin(async { Message::UnfocusDock })))
+                }
+                _ => Command::none(),
+            },
+            Message::FocusDock => {
+                self.focused = true;
+                if self.expanded {
+                    wm_hints::grab_keyboard(&self.wm_state).unwrap();
+                }
+                Command::none()
+            }
+            Message::UnfocusDock => {
+                if self.expanded {
+                    wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
+                }
+                self.focused = false;
+                Command::none()
+            }
+            Message::ExpandDock => {
+                self.expanded = true;
+
+                // grab keyboard focus
+                if !self.focused {
+                    wm_hints::grab_keyboard(&self.wm_state).unwrap();
+                    self.focused = true;
+                }
+
+                let command = match self.state {
+                    State::Connected(state) => advanced_text_input::focus(INPUT_ID.clone()),
+                    _ => Command::none(),
+                };
+
+                Command::batch([iced_winit::window::resize(1, 250), command])
+            }
+            Message::CollapseDock => {
+                self.expanded = false;
+                if self.focused {
+                    wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
+                }
+                match self.state {
+                    State::Connected(state) => {
+                        state.input_value = String::new();
+                        state.active_index = None;
                     }
-                    Command::none()
+                    _ => {}
                 }
-                Message::CollapseDock => {
-                    self.expanded = false;
-                    state.input_value = String::new();
-                    state.active_index = None;
 
-                    // release keyboard focus
-                    if self.focused {
-                        wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
-                        self.focused = false;
+                iced_winit::window::resize(1, 50)
+            }
+            Message::EditInput(value) => {
+                match self.state {
+                    State::Connected(state) => {
+                        state.input_value = value;
                     }
-
-                    iced_winit::window::resize(1, 50)
+                    _ => {}
                 }
-                Message::ExpandDock => {
-                    self.expanded = true;
-
-                    // grab keyboard focus
-                    if !self.focused {
-                        wm_hints::grab_keyboard(&self.wm_state).unwrap();
-                        self.focused = true;
-                    }
-
-                    Command::batch([
-                        iced_winit::window::resize(1, 250),
-                        advanced_text_input::focus(INPUT_ID.clone()),
-                    ])
-                }
-                Message::EditInput(value) => {
-                    state.input_value = value;
-                    Command::none()
-                }
-                Message::PushInput => {
+                Command::none()
+            }
+            Message::SubmitInput=> match self.state {
+                State::Connected(state) => {
                     let val = std::mem::take(&mut state.input_value);
                     match val.split_once(" ").map(|x| x.0).unwrap_or(val.as_str()) {
-                        "q" => {
-                            self.expanded = false;
-                            state.input_value = String::new();
-                            state.active_index = None;
-
-                            // release keyboard focus
-                            if self.focused {
-                                wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
-                                self.focused = false;
-                            }
-
-                            iced_winit::window::resize(1, 50)
-                        }
+                        "q" => Command::single(Action::Future(Box::pin(async {
+                            Message::CollapseDock
+                        }))),
                         "x" => panic!(),
-                        "po" => {
-                            if let Some(task) = state.live_tasks.pop_front() {
-                                state
-                                    .finished_tasks
-                                    .push((task, TaskCompletionKind::Obsoleted));
-                            }
-                            Command::none()
-                        }
-                        "ps" => {
-                            if let Some(task) = state.live_tasks.pop_front() {
-                                state
-                                    .finished_tasks
-                                    .push((task, TaskCompletionKind::Success));
-                            }
-                            Command::none()
-                        }
-                        "pf" => {
-                            if let Some(task) = state.live_tasks.pop_front() {
-                                state
-                                    .finished_tasks
-                                    .push((task, TaskCompletionKind::Failure));
-                            }
-                            Command::none()
-                        }
-                        "r" => {
-                            if let Some((task, _)) = state.finished_tasks.pop() {
-                                state.live_tasks.push_front(task);
-                            }
-                            Command::none()
-                        }
-                        "swp" => {
-                            if let Ok((i, j)) = sscanf::scanf!(val, "swp {} {}", usize, usize) {
-                                if i < state.live_tasks.len() && j < state.live_tasks.len() {
-                                    state.live_tasks.swap(i, j);
+                        "ps" => Self::wsop(
+                            &state.snapshot,
+                            &mut state.websocket_send,
+                            Op::Pop(0, TaskStatus::Succeeded),
+                        ),
+                        "pf" => Self::wsop(
+                            &state.snapshot,
+                            &mut state.websocket_send,
+                            Op::Pop(0, TaskStatus::Failed),
+                        ),
+                        "po" => Self::wsop(
+                            &state.snapshot,
+                            &mut state.websocket_send,
+                            Op::Pop(0, TaskStatus::Obsoleted),
+                        ),
+                        "r" => Self::wsop(
+                            &state.snapshot,
+                            &mut state.websocket_send,
+                            Op::RestoreFinished,
+                        ),
+                        "mv" => {
+                            let op = if let Ok((i, j)) = sscanf::scanf!(val, "mv {} {}", usize, usize) {
+                                if i < state.snapshot.live.len() && j < state.snapshot.live.len() {
+                                    Some(Op::Move(i, j))
+                                } else {
+                                    None
                                 }
-                            } else if let Ok(i) = sscanf::scanf!(val, "swp {}", usize) {
-                                if i < state.live_tasks.len() {
-                                    state.live_tasks.swap(0, i);
+                            } else if let Ok(i) = sscanf::scanf!(val, "mv {}", usize) {
+                                if i < state.snapshot.live.len() {
+                                    Some(Op::Move(i, 0))
+                                } else {
+                                    None
                                 }
-                            } else if val == "swp" {
-                                if state.live_tasks.len() >= 2 {
-                                    state.live_tasks.swap(0, 1);
+                            } else if val == "mv" {
+                                if state.snapshot.live.len() >= 2 {
+                                    Some(Op::Move(0, 1))
+                                } else {
+                                    None
                                 }
+                            } else {
+                                None
+                            };
+                            match op {
+                                Some(op) => Self::wsop( &state.snapshot, &mut state.websocket_send, op, ),
+                                None => Command::none()
                             }
-                            Command::none()
                         }
-                        _ => {
-                            state.live_tasks.push_front(val);
-                            state.active_index = state.active_index.map(|x| x + 1);
-                            Command::none()
-                        }
+                        _ => Self::wsop(
+                            &state.snapshot,
+                            &mut state.websocket_send,
+                            Op::NewLive(val, 0),
+                        ),
                     }
                 }
-                Message::QueueInput => {
-                    state
-                        .live_tasks
-                        .push_back(std::mem::take(&mut state.input_value));
-                    Command::none()
-                }
-                Message::EditActive(value) => {
-                    state.live_tasks[state.active_index.unwrap()] = value;
-                    Command::none()
-                }
-                Message::QueueActive => {
-                    let value = state
-                        .live_tasks
-                        .remove(state.active_index.unwrap())
-                        .unwrap();
-                    state.live_tasks.push_back(value);
-                    state.active_index = Some(state.live_tasks.len() - 1);
-                    Command::none()
-                }
-                Message::PopActive(kind) => {
-                    let value = state
-                        .live_tasks
-                        .remove(state.active_index.unwrap())
-                        .unwrap();
-                    state.finished_tasks.push((value, kind));
-                    state.active_index = None;
-                    Command::none()
-                }
-                Message::PopTopmost(kind) => {
-                    if let Some(task) = state.live_tasks.pop_front() {
-                        state.finished_tasks.push((task, kind));
-                    }
-                    Command::none()
-                }
-                Message::SetActive(a) => {
-                    state.active_index = a;
-                    if a.is_some() {
-                        advanced_text_input::focus(ACTIVE_INPUT_ID.clone())
-                    } else {
-                        Command::none()
-                    }
-                }
+                _ => Command::none(),
             },
+            Message::EditActive(value) => {
+                state.state.live[state.active_index.unwrap()] = value;
+                Command::none()
+            }
+            Message::QueueActive => {
+                let value = state
+                    .live_tasks
+                    .remove(state.active_index.unwrap())
+                    .unwrap();
+                state.live_tasks.push_back(value);
+                state.active_index = Some(state.live_tasks.len() - 1);
+                Command::none()
+            }
+            Message::PopActive(kind) => {
+                let value = state
+                    .live_tasks
+                    .remove(state.active_index.unwrap())
+                    .unwrap();
+                state.finished_tasks.push((value, kind));
+                state.active_index = None;
+                Command::none()
+            }
+            Message::PopTopmost(kind) => {
+                if let Some(task) = state.live_tasks.pop_front() {
+                    state.finished_tasks.push((task, kind));
+                }
+                Command::none()
+            }
+            Message::SetActive(a) => {
+                state.active_index = a;
+                if a.is_some() {
+                    advanced_text_input::focus(ACTIVE_INPUT_ID.clone())
+                } else {
+                    Command::none()
+                }
+            }
         }
     }
 

@@ -2,8 +2,8 @@ mod advanced_text_input;
 mod program_runner;
 mod todos;
 mod wm_hints;
+mod utils;
 
-use iced_native::event;
 use todos::Todos;
 
 use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
