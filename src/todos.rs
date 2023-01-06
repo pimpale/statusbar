@@ -53,6 +53,12 @@ pub enum State {
     Connected(ConnectedState),
 }
 
+impl State {
+    fn not_connected(api_key: String, error: Option<String>) -> State {
+        State::NotConnected(NotConnectedState { api_key, error })
+    }
+}
+
 #[derive(Debug)]
 pub struct NotLoggedInState {
     email: String,
@@ -120,44 +126,82 @@ impl ConnectedState {
             },
         };
 
-        let sink = self.websocket_send.clone();
-        let msg = tungstenite::protocol::Message::Text(serde_json::to_string(&wsop).unwrap());
+        let wsop_text = serde_json::to_string(&wsop).unwrap();
 
-        Command::single(Action::Future(Box::pin(async move {
-            Message::WebsocketSendComplete(
-                sink.lock().await.feed(msg).await.map_err(|e| e.to_string()),
-            )
-        })))
-    }
-
-    fn pong(&self, pingdata: Vec<u8>) -> Command<Message> {
-        let sink = self.websocket_send.clone();
-        let msg = tungstenite::protocol::Message::Pong(pingdata);
-
-        Command::single(Action::Future(Box::pin(async move {
-            Message::WebsocketSendComplete(
-                sink.lock().await.feed(msg).await.map_err(|e| e.to_string()),
-            )
-        })))
-    }
-}
-
-fn tryconnect() -> Command<Message> {
-    Command::single(Action::Future(Box::pin(async {
-        Message::ConnectAttemptComplete(
-            tokio_tungstenite::connect_async(format!("{}/ws/task_updates", TODOPROXY_URL))
-                .await
-                .map_err(|e| e.to_string())
-                .map(|(w, _)| {
-                    let (sink, stream) = w.split();
-                    let sink: WebsocketSink = Box::new(sink);
-                    let stream: WebsocketStream = Box::new(stream);
-                    (Arc::new(Mutex::new(sink)), Arc::new(Mutex::new(stream)))
-                }),
+        wsutils::send(
+            self.websocket_send.clone(),
+            tungstenite::protocol::Message::Text(wsop_text),
         )
-    })))
+    }
+
+    enum RecvOp {
+        Nop,
+        Op(WebsocketOp),
+        Ping(Vec<u8>),
+    }
+
+    fn handle_recv(&self, msg:tungstenite::protocol::Message) -> Result<RecvOp , String> {
+                    match result {
+                    Some(Ok(msg)) => match msg {
+                        tungstenite::Message::Text(msg) => 
+                            serde_json::from_str(&msg)
+                                .map(|v| RecvOp::Op(v))
+                                .map_err(|e| ConnectionFailed(e.to_string())),
+                        tungstenite::Message::Ping(data) => Ok(RecvOp::Ping(data)),
+                        tungstenite::Message::Close(f) =>  Err(match f {
+                                Some(f) => format!("connection closed: {}", f.reason),
+                                None => String::from("connection closed unexpectedly"),
+                            }),
+                        _ => Nop,
+                    },
+                    Some(Err(e)) =>Err(format!("error: {}", e)),
+                    None => Err(String::from("Lost connection")),
+                    }
+    }
+
 }
 
+mod wsutils {
+    fn attempt_connect() -> Command<Message> {
+        Command::single(Action::Future(Box::pin(async {
+            Message::ConnectAttemptComplete(
+                tokio_tungstenite::connect_async(format!("{}/ws/task_updates", TODOPROXY_URL))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .map(|(w, _)| {
+                        let (sink, stream) = w.split();
+                        let sink: WebsocketSink = Box::new(sink);
+                        let stream: WebsocketStream = Box::new(stream);
+                        (Arc::new(Mutex::new(sink)), Arc::new(Mutex::new(stream)))
+                    }),
+            )
+        })))
+    }
+
+    fn send(
+        sink: Arc<Mutex<WebsocketSink>>,
+        msg: tungstenite::protocol::Message,
+    ) -> Command<Message> {
+        Command::single(Action::Future(Box::pin(async move {
+            Message::WebsocketSendComplete(
+                sink.lock().await.feed(msg).await.map_err(|e| e.to_string()),
+            )
+        })))
+    }
+
+    fn recv(stream: Arc<Mutex<WebsocketStream>>) -> Command<Message> {
+        Command::single(Action::Future(Box::pin(async move {
+            Message::WebsocketRecvComplete(
+                stream
+                    .lock()
+                    .await
+                    .next()
+                    .await
+                    .map(|x| x.map_err(|e| e.to_string())),
+            )
+        })))
+    }
+}
 
 impl Default for NotLoggedInState {
     fn default() -> Self {
@@ -435,13 +479,11 @@ impl ProgramWithSubscription for Todos {
                         Ok(ApiKey {
                             key: Some(api_key), ..
                         }) => {
-                            self.state = State::NotConnected(NotConnectedState {
-                                api_key,
-                                error: None,
+                            self.state = State::not_connected(api_key, None),
                             });
 
                             // we need to now try to initialize the websocket connection
-                            tryconnect()
+                            wsutils::attempt_connect()
                         }
                         Ok(_) => {
                             state.error = Some(String::from("No ApiKey returned"));
@@ -482,25 +524,8 @@ impl ProgramWithSubscription for Todos {
                             serde_json::to_string(&WebsocketInitMessage { api_key }).unwrap(),
                         );
 
-                        Command::batch([
-                            // send the auth thing
-                            Command::single(Action::Future(Box::pin(async move {
-                                Message::WebsocketSendComplete(
-                                    sink.lock().await.feed(msg).await.map_err(|e| e.to_string()),
-                                )
-                            }))),
-                            // start listening
-                            Command::single(Action::Future(Box::pin(async move {
-                                Message::WebsocketRecvComplete(
-                                    stream
-                                        .lock()
-                                        .await
-                                        .next()
-                                        .await
-                                        .map(|x| x.map_err(|e| e.to_string())),
-                                )
-                            }))),
-                        ])
+                        // send the auth initializer and begin listening
+                        Command::batch([wsutils::send(sink, msg), wsutils::recv(stream)])
                     }
                     Err(e) => {
                         state.error = Some(e);
@@ -515,11 +540,7 @@ impl ProgramWithSubscription for Todos {
                     // on any send error, it's probably because the connection died
                     // in this case, return back to NotConnected
                     Err(e) => {
-                        let api_key = state.api_key.clone();
-                        self.state = State::NotConnected(NotConnectedState {
-                            api_key,
-                            error: Some(e),
-                        });
+                        self.state = State::not_connected(state.api_key.clone(), Some(e), );
                         // we probably don't want to immediately try recommecting, let's let the user press the retry button
                         Command::none()
                     }
@@ -527,32 +548,12 @@ impl ProgramWithSubscription for Todos {
                 _ => Command::none(),
             },
             Message::WebsocketRecvComplete(result) => match self.state {
-                State::Connected(ref mut state) => match result {
-                    Some(Ok(msg)) => match msg {
-                        tungstenite::Message::Text(_) => todo!(),
-                        tungstenite::Message::Ping(data) => state.pong(data),
-                        tungstenite::Message::Close(_) => todo!(),
-                        _ => Command::none(),
-                    },
-                    Some(Err(e)) => {
-                        let api_key = state.api_key.clone();
-                        self.state = State::NotConnected(NotConnectedState {
-                            api_key,
-                            error: Some(e),
-                        });
-                        Command::none()
-                    }
-                    None => {
-                        let api_key = state.api_key.clone();
-                        self.state = State::NotConnected(NotConnectedState {
-                            api_key,
-                            error: Some(String::from("Lost connection")),
-                        });
-                        Command::none()
-                    }
+                State::Connected(ref mut state) => match state.handle_recv(result) {
+                    Ok(v) => todo!(),
+                    Err(e) => todo!()
+                   },
+                   _=> Command::none()
                 },
-                _ => Command::none(),
-            },
         }
     }
 
