@@ -375,21 +375,19 @@ impl ProgramWithSubscription for Todos {
                         "ps" => match state.snapshot.live.len() {
                             0 => Command::none(),
                             _ => state.wsop(Op::Pop(0, TaskStatus::Succeeded)),
-                        }
+                        },
                         "pf" => match state.snapshot.live.len() {
                             0 => Command::none(),
                             _ => state.wsop(Op::Pop(0, TaskStatus::Failed)),
-                        }
+                        },
                         "po" => match state.snapshot.live.len() {
                             0 => Command::none(),
                             _ => state.wsop(Op::Pop(0, TaskStatus::Obsoleted)),
-                        }
-                        "r" => {
-                            if !state.snapshot.finished.is_empty() {
-                                state.wsop(Op::RestoreFinished)
-                            } else {
-                                Command
-                        }
+                        },
+                        "r" => match state.snapshot.live.len() {
+                            0 => Command::none(),
+                            _ => state.wsop(Op::RestoreFinished),
+                        },
                         "mv" => {
                             if let Ok((i, j)) = sscanf::scanf!(val, "mv {} {}", usize, usize) {
                                 if i < state.snapshot.live.len() && j < state.snapshot.live.len() {
@@ -548,12 +546,18 @@ impl ProgramWithSubscription for Todos {
                             },
                         });
 
-                        let msg = tungstenite::protocol::Message::Text(
+                        let init_msg = tungstenite::protocol::Message::Text(
                             serde_json::to_string(&WebsocketInitMessage { api_key }).unwrap(),
                         );
 
-                        // send the auth initializer and begin listening
-                        Command::batch([Todos::send(sink, msg), Todos::recv(stream)])
+                        Command::batch([
+                            // send the initial message
+                            Todos::send(sink, init_msg),
+                            // start recieving responses
+                            Todos::recv(stream),
+                            // focus the input bar
+                            advanced_text_input::focus(INPUT_ID.clone()),
+                        ])
                     }
                     Err(e) => {
                         state.error = Some(e);
