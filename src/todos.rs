@@ -590,7 +590,7 @@ impl ProgramWithSubscription for Todos {
                                 tungstenite::protocol::Message::Pong(data),
                             ),
                             ConnectedStateRecvKind::Op(WebsocketOp { kind, .. }) => {
-                                apply_operation(&mut state.snapshot, kind);
+                                apply_operation(&mut state.snapshot, &mut state.kind);
                                 Command::none()
                             }
                         },
