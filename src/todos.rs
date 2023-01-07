@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use auth_service_api::request::ApiKeyNewWithEmailProps;
-use auth_service_api::response::{ApiKey, AuthError};
+use auth_service_api::response::ApiKey;
 use derivative::Derivative;
 use futures_util::{FutureExt, Sink, SinkExt, Stream, StreamExt, TryFutureExt};
 use iced_native::command::Action;
@@ -38,8 +38,8 @@ static PASSWORD_INPUT_ID: Lazy<advanced_text_input::Id> =
 static INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 
-static AUTH_URL: &str = "http://localhost:7080/public";
-static TODOPROXY_URL: &str = "http://localhost:7080/";
+static AUTH_URL: &str = "http://localhost:8079/public";
+static TODOPROXY_URL: &str = "http://127.0.0.1:8080/";
 
 #[derive(Debug)]
 pub struct Todos {
@@ -151,7 +151,7 @@ impl ConnectedState {
             Some(Ok(msg)) => match msg {
                 tungstenite::Message::Text(msg) => serde_json::from_str(&msg)
                     .map(|v| ConnectedStateRecvKind::Op(v))
-                    .map_err(|e| e.to_string()),
+                    .map_err(report_serde_error),
                 tungstenite::Message::Ping(data) => Ok(ConnectedStateRecvKind::Ping(data)),
                 tungstenite::Message::Close(f) => Err(match f {
                     Some(f) => format!("connection closed: {}", f.reason),
@@ -159,7 +159,7 @@ impl ConnectedState {
                 }),
                 _ => Ok(ConnectedStateRecvKind::Nop),
             },
-            Some(Err(e)) => Err(format!("error: {}", e)),
+            Some(Err(e)) => Err(e),
             None => Err(String::from("Lost connection")),
         }
     }
@@ -245,7 +245,7 @@ impl Todos {
             Message::ConnectAttemptComplete(
                 tokio_tungstenite::connect_async(format!("{}/ws/task_updates", TODOPROXY_URL))
                     .await
-                    .map_err(|e| e.to_string())
+                    .map_err(report_tungstenite_error)
                     .map(|(w, _)| {
                         let (sink, stream) = w.split();
                         let sink: WebsocketSink = Box::new(sink);
@@ -262,7 +262,11 @@ impl Todos {
     ) -> Command<Message> {
         Command::single(Action::Future(Box::pin(async move {
             Message::WebsocketSendComplete(
-                sink.lock().await.feed(msg).await.map_err(|e| e.to_string()),
+                sink.lock()
+                    .await
+                    .feed(msg)
+                    .await
+                    .map_err(report_tungstenite_error),
             )
         })))
     }
@@ -275,7 +279,7 @@ impl Todos {
                     .await
                     .next()
                     .await
-                    .map(|x| x.map_err(|e| e.to_string())),
+                    .map(|x| x.map_err(report_tungstenite_error)),
             )
         })))
     }
@@ -454,7 +458,13 @@ impl ProgramWithSubscription for Todos {
                 _ => Command::none(),
             },
             Message::SubmitPassword => match self.state {
-                State::NotLoggedIn(_) => Todos::next_widget(),
+                State::NotLoggedIn(ref state) => {
+                    if !state.email.is_empty() && !state.password.is_empty() {
+                        Command::single(Action::Future(Box::pin(async { Message::AttemptLogin })))
+                    } else {
+                        Todos::next_widget()
+                    }
+                }
                 _ => Command::none(),
             },
             Message::TogglePasswordView => match self.state {
@@ -472,9 +482,7 @@ impl ProgramWithSubscription for Todos {
                     let duration = Duration::from_secs(24 * 60 * 60).as_millis() as i64;
                     Command::single(Action::Future(Box::pin(async move {
                         Message::LoginAttemptComplete(
-                            api_key_new_with_email(auth_base_url, email, password, duration)
-                                .await
-                                .map_err(|e| e.to_string()),
+                            api_key_new_with_email(auth_base_url, email, password, duration).await,
                         )
                     })))
                 }
@@ -585,12 +593,18 @@ impl ProgramWithSubscription for Todos {
                 state: State::NotLoggedIn(_),
                 expanded: false,
                 ..
-            } => container(button("Click to Log In").on_press(Message::ExpandDock))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center_x()
-                .center_y()
-                .into(),
+            } => button(
+                text("Click to Log In")
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center)
+                    .height(Length::Fill)
+                    .width(Length::Fill),
+            )
+            .style(theme::Button::Text)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .on_press(Message::ExpandDock)
+            .into(),
             Self {
                 state:
                     State::NotLoggedIn(NotLoggedInState {
@@ -627,20 +641,26 @@ impl ProgramWithSubscription for Todos {
                 let submit_button = button("Submit").on_press(Message::AttemptLogin);
 
                 row(vec![
-                    button("Collapse").on_press(Message::CollapseDock).into(),
+                    column(vec![
+                        button("Collapse")
+                            .on_press(Message::CollapseDock)
+                            .width(Length::Shrink)
+                            .into(),
+                        button(if *view_password {
+                            "Hide Password"
+                        } else {
+                            "View Password"
+                        })
+                        .on_press(Message::TogglePasswordView)
+                        .width(Length::Shrink)
+                        .into(),
+                    ])
+                    .spacing(10)
+                    .width(Length::Shrink)
+                    .into(),
                     column(vec![
                         email_input.into(),
-                        row(vec![
-                            password_input.into(),
-                            button(if *view_password {
-                                "Hide Password"
-                            } else {
-                                "View Password"
-                            })
-                            .into(),
-                        ])
-                        .spacing(10)
-                        .into(),
+                        password_input.into(),
                         submit_button.into(),
                         error.into(),
                     ])
@@ -662,12 +682,17 @@ impl ProgramWithSubscription for Todos {
                     None => text("Connecting..."),
                 };
                 // button should fill whole screen
-                button(text.horizontal_alignment(alignment::Horizontal::Center))
-                    .height(Length::Fill)
-                    .width(Length::Fill)
-                    .style(theme::Button::Text)
-                    .on_press(Message::ExpandDock)
-                    .into()
+                button(
+                    text.horizontal_alignment(alignment::Horizontal::Center)
+                        .vertical_alignment(alignment::Vertical::Center)
+                        .height(Length::Fill)
+                        .width(Length::Fill),
+                )
+                .style(theme::Button::Text)
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .on_press(Message::ExpandDock)
+                .into()
             }
             Self {
                 state: State::NotConnected(NotConnectedState { error, .. }),
@@ -842,7 +867,7 @@ async fn api_key_new_with_email(
     email: String,
     password: String,
     duration: i64,
-) -> Result<ApiKey, AuthError> {
+) -> Result<ApiKey, String> {
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{}/api_key/new_with_email", auth_base_url))
@@ -853,12 +878,12 @@ async fn api_key_new_with_email(
         })
         .send()
         .await
-        .map_err(|_| AuthError::Network)?;
+        .map_err(report_reqwest_error)?;
 
     if resp.status().as_u16() == 200 {
-        Ok(resp.json().await.map_err(|_| AuthError::DecodeError)?)
+        Ok(resp.json().await.map_err(report_reqwest_error)?)
     } else {
-        Err(resp.json().await.map_err(|_| AuthError::DecodeError)?)
+        Err(resp.text().await.map_err(report_reqwest_error)?)
     }
 }
 
@@ -923,4 +948,19 @@ fn apply_operation(
             }
         }
     }
+}
+
+pub fn report_reqwest_error(e: reqwest::Error) -> String {
+    log::error!("{}", e);
+    e.to_string()
+}
+
+pub fn report_serde_error(e: serde_json::Error) -> String {
+    log::error!("{}", e);
+    e.to_string()
+}
+
+pub fn report_tungstenite_error(e: tungstenite::error::Error) -> String {
+    log::error!("{}", e);
+    e.to_string()
 }
