@@ -39,7 +39,7 @@ static INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::
 static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 
 static AUTH_URL: &str = "http://localhost:8079/public";
-static TODOPROXY_URL: &str = "http://127.0.0.1:8080/";
+static TODOPROXY_URL: &str = "ws://127.0.0.1:8080";
 
 #[derive(Debug)]
 pub struct Todos {
@@ -264,7 +264,7 @@ impl Todos {
             Message::WebsocketSendComplete(
                 sink.lock()
                     .await
-                    .feed(msg)
+                    .send(msg)
                     .await
                     .map_err(report_tungstenite_error),
             )
@@ -372,10 +372,24 @@ impl ProgramWithSubscription for Todos {
                             Message::CollapseDock
                         }))),
                         "x" => panic!(),
-                        "ps" => state.wsop(Op::Pop(0, TaskStatus::Succeeded)),
-                        "pf" => state.wsop(Op::Pop(0, TaskStatus::Failed)),
-                        "po" => state.wsop(Op::Pop(0, TaskStatus::Obsoleted)),
-                        "r" => state.wsop(Op::RestoreFinished),
+                        "ps" => match state.snapshot.live.len() {
+                            0 => Command::none(),
+                            _ => state.wsop(Op::Pop(0, TaskStatus::Succeeded)),
+                        }
+                        "pf" => match state.snapshot.live.len() {
+                            0 => Command::none(),
+                            _ => state.wsop(Op::Pop(0, TaskStatus::Failed)),
+                        }
+                        "po" => match state.snapshot.live.len() {
+                            0 => Command::none(),
+                            _ => state.wsop(Op::Pop(0, TaskStatus::Obsoleted)),
+                        }
+                        "r" => {
+                            if !state.snapshot.finished.is_empty() {
+                                state.wsop(Op::RestoreFinished)
+                            } else {
+                                Command
+                        }
                         "mv" => {
                             if let Ok((i, j)) = sscanf::scanf!(val, "mv {} {}", usize, usize) {
                                 if i < state.snapshot.live.len() && j < state.snapshot.live.len() {
@@ -931,9 +945,6 @@ fn apply_operation(
             let del_pos = live.iter().position(|x| x.id == id_del);
 
             if let (Some(mut ins_pos), Some(del_pos)) = (ins_pos, del_pos) {
-                if ins_pos > del_pos {
-                    ins_pos -= 1;
-                }
                 let removed = live.remove(del_pos).unwrap();
                 live.insert(ins_pos, removed);
             }
