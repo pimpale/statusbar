@@ -2795,7 +2795,7 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 [[package]]
 name = "todoproxy-api"
 version = "0.0.1"
-source = "git+https://github.com/pimpale/todoproxy-api#1457376fde9d8ae46a61782bf787a49d52ea03e2"
+source = "git+https://github.com/pimpale/todoproxy-api#21484e666c3335e60ed086fd254aee062be8289e"
 dependencies = [
  "derive_more",
  "num-derive",
