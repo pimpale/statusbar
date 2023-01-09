@@ -1,8 +1,9 @@
 mod advanced_text_input;
 mod program_runner;
 mod todos;
-mod wm_hints;
 mod utils;
+mod wm_hints;
+mod xdg_manager;
 
 use todos::Todos;
 
@@ -19,8 +20,14 @@ use winit::{
     platform::unix::{WindowBuilderExtUnix, XWindowType},
 };
 
+pub static APP_NAME: &'static str = "statusbar";
+
 pub fn main() {
     env_logger::init();
+
+    // try to read config
+    let app_config =
+        xdg_manager::get_or_create_config::<todos::TodosConfig>("config.json").unwrap();
 
     // Initialize winit
     let event_loop =
@@ -37,12 +44,13 @@ pub fn main() {
 
     let wm_state_mgr = wm_hints::create_state_mgr(&window).unwrap();
     // initialize app state
-    let todos = Todos::new(wm_state_mgr);
+    let todos = Todos::new(app_config, wm_state_mgr);
 
     let mut viewport = Viewport::with_physical_size(
         Size::new(physical_size.width, physical_size.height),
         window.scale_factor(),
     );
+
     let mut cursor_position = PhysicalPosition::new(-1.0, -1.0);
     let mut modifiers = ModifiersState::default();
     let mut clipboard = Clipboard::connect(&window);

@@ -17,6 +17,7 @@ use iced_wgpu::Renderer;
 
 use once_cell::sync::Lazy;
 
+use serde::{Deserialize, Serialize};
 use todoproxy_api::request::WebsocketInitMessage;
 use todoproxy_api::{
     FinishedTask, LiveTask, StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind,
@@ -38,8 +39,19 @@ static PASSWORD_INPUT_ID: Lazy<advanced_text_input::Id> =
 static INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 
-static AUTH_URL: &str = "http://localhost:8079/public";
-static TODOPROXY_URL: &str = "ws://127.0.0.1:8080";
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TodosConfig {
+  server_url: String
+}
+
+impl Default for TodosConfig {
+    fn default() -> Self {
+        TodosConfig {
+            server_url: String::from("http://localhost:8080/"
+        }
+
+    }
+}
 
 #[derive(Debug)]
 pub struct Todos {

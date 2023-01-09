@@ -41,7 +41,10 @@ impl std::fmt::Display for WmHintsError {
 
 impl std::error::Error for WmHintsError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
+        match self {
+            Self::XcbError(e) => Some(e),
+            _ => None,
+        }
     }
 }
 
