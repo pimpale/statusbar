@@ -234,7 +234,9 @@ pub enum Message {
     // Websocket Interactions
     WebsocketSendComplete(Result<(), String>),
     WebsocketRecvComplete(Option<Result<tungstenite::protocol::Message, String>>),
-    // debugging
+    // Websocket Ping
+    WebsocketPongRecvComplete(Result<(), String>),
+    WebsocketPongDeadlineArrived,
     Yeet,
 }
 
