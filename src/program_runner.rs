@@ -343,6 +343,14 @@ fn run_command<P, E>(
                         .send_event(tag(mode))
                         .expect("Send message to event loop");
                 }
+                window::Action::Close => {
+                    todo!();
+                }
+                window::Action::ToggleDecorations => window.set_decorations(!window.is_decorated()),
+                window::Action::RequestUserAttention(user_attention) => {
+                    window.request_user_attention(user_attention.map(conversion::user_attention))
+                }
+                window::Action::GainFocus => window.focus_window(),
             },
             command::Action::Widget(action) => {
                 let mut current_cache = std::mem::take(cache);

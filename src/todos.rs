@@ -17,18 +17,20 @@ use iced_wgpu::Renderer;
 
 use once_cell::sync::Lazy;
 
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use todoproxy_api::request::WebsocketInitMessage;
+use todoproxy_api::response::Info;
 use todoproxy_api::{
     FinishedTask, LiveTask, StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind,
 };
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite;
 
-use crate::advanced_text_input;
 use crate::program_runner::ProgramWithSubscription;
 use crate::utils;
 use crate::wm_hints;
+use crate::{advanced_text_input, xdg_manager};
 
 // username and password text .valueboxes
 static EMAIL_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
@@ -41,21 +43,29 @@ static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TodosConfig {
-  server_url: String
+    server_api_url: String,
 }
 
 impl Default for TodosConfig {
     fn default() -> Self {
         TodosConfig {
-            server_url: String::from("http://localhost:8080/"
+            server_api_url: String::from("http://localhost:8080/public/"),
         }
-
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TodosCache {
+    // used to check if the server_api_url has changed in config (and thus we need to reset)
+    server_api_url: String,
+    api_key: String,
 }
 
 #[derive(Debug)]
 pub struct Todos {
+    server_api_url: Url,
     wm_state: wm_hints::WmHintsState,
+    grabbed: bool,
     focused: bool,
     expanded: bool,
     state: State,
@@ -64,11 +74,15 @@ pub struct Todos {
 #[derive(Debug)]
 pub enum State {
     NotLoggedIn(NotLoggedInState),
+    Restored(RestoredState),
     NotConnected(NotConnectedState),
     Connected(ConnectedState),
 }
 
 impl State {
+    fn from_cache(api_key: String) -> State {
+        State::Restored(RestoredState { api_key })
+    }
     fn not_connected(api_key: String, error: Option<String>) -> State {
         State::NotConnected(NotConnectedState { api_key, error })
     }
@@ -86,6 +100,11 @@ pub struct NotLoggedInState {
 pub struct NotConnectedState {
     api_key: String,
     error: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct RestoredState {
+    api_key: String,
 }
 
 type WebsocketStream = Box<
@@ -229,14 +248,35 @@ pub enum Op {
 }
 
 impl Todos {
-    pub fn new(wm_state: wm_hints::WmHintsState) -> Todos {
-        Todos {
+    pub fn new(wm_state: wm_hints::WmHintsState) -> Result<Todos, Box<dyn std::error::Error>> {
+        // try to read config
+        let config = xdg_manager::get_or_create_config::<TodosConfig>("config.json").unwrap();
+
+        let cache = xdg_manager::load_cache_if_exists::<TodosCache>("cache.json").unwrap();
+
+        let state = match cache {
+            Some(cache) if cache.server_api_url == config.server_api_url => {
+                State::from_cache(cache.api_key)
+            }
+            _ => State::NotLoggedIn(NotLoggedInState::default()),
+        };
+
+        let server_api_url = Url::parse(&config.server_api_url)?;
+
+        // throw error if not https or http
+        match server_api_url.scheme() {
+            "https" | "http" => {}
+            _ => Err("invalid url")?,
+        }
+
+        Ok(Todos {
+            server_api_url,
             wm_state,
+            grabbed: false,
             expanded: false,
             focused: false,
-            // state: State::Loading,
-            state: State::NotLoggedIn(NotLoggedInState::default()),
-        }
+            state,
+        })
     }
 
     fn next_widget() -> Command<Message> {
@@ -245,10 +285,18 @@ impl Todos {
         )))
     }
 
-    fn attempt_connect() -> Command<Message> {
-        Command::single(Action::Future(Box::pin(async {
+    fn attempt_connect(&self) -> Command<Message> {
+        let mut ws_task_updates_url = self.server_api_url.join("ws/task_updates").unwrap();
+
+        if ws_task_updates_url.scheme() == "https" {
+            ws_task_updates_url.set_scheme("wss").unwrap();
+        } else {
+            ws_task_updates_url.set_scheme("ws").unwrap();
+        }
+
+        Command::single(Action::Future(Box::pin(async move {
             Message::ConnectAttemptComplete(
-                tokio_tungstenite::connect_async(format!("{}/ws/task_updates", TODOPROXY_URL))
+                tokio_tungstenite::connect_async(ws_task_updates_url)
                     .await
                     .map_err(report_tungstenite_error)
                     .map(|(w, _)| {
@@ -319,11 +367,12 @@ impl ProgramWithSubscription for Todos {
                 _ => Command::none(),
             },
             Message::FocusDock => {
-                if !self.focused {
-                    if self.expanded {
+                self.focused = true;
+                if self.expanded {
+                    if !self.grabbed {
                         match wm_hints::grab_keyboard(&self.wm_state).map_err(report_wmhints_error)
                         {
-                            Ok(_) => self.focused = true,
+                            Ok(_) => self.grabbed = true,
                             _ => {}
                         }
                     }
@@ -331,15 +380,11 @@ impl ProgramWithSubscription for Todos {
                 Command::none()
             }
             Message::UnfocusDock => {
-                if self.focused {
-                    self.focused = false;
-                    if self.expanded {
-                        match wm_hints::ungrab_keyboard(&self.wm_state)
-                            .map_err(report_wmhints_error)
-                        {
-                            Ok(_) => self.focused = false,
-                            _ => {}
-                        }
+                self.focused = false;
+                if self.grabbed {
+                    match wm_hints::ungrab_keyboard(&self.wm_state).map_err(report_wmhints_error) {
+                        Ok(_) => self.grabbed = false,
+                        _ => {}
                     }
                 }
                 Command::none()
@@ -349,7 +394,10 @@ impl ProgramWithSubscription for Todos {
 
                 // grab keyboard focus
                 if self.focused {
-                    wm_hints::grab_keyboard(&self.wm_state).unwrap();
+                    match wm_hints::grab_keyboard(&self.wm_state).map_err(report_wmhints_error) {
+                        Ok(_) => self.grabbed = true,
+                        _ => {}
+                    }
                 }
 
                 let command = match self.state {
@@ -362,8 +410,11 @@ impl ProgramWithSubscription for Todos {
             }
             Message::CollapseDock => {
                 self.expanded = false;
-                if self.focused {
-                    wm_hints::ungrab_keyboard(&self.wm_state).unwrap();
+                if self.grabbed {
+                    match wm_hints::ungrab_keyboard(&self.wm_state).map_err(report_wmhints_error) {
+                        Ok(_) => self.grabbed = false,
+                        _ => {}
+                    }
                 }
                 match self.state {
                     State::Connected(ref mut state) => {
@@ -525,13 +576,13 @@ impl ProgramWithSubscription for Todos {
             },
             Message::AttemptLogin => match self.state {
                 State::NotLoggedIn(ref state) => {
-                    let auth_base_url = String::from(AUTH_URL);
+                    let server_api_url = self.server_api_url.clone();
                     let email = state.email.clone();
                     let password = state.password.clone();
                     let duration = Duration::from_secs(24 * 60 * 60).as_millis() as i64;
                     Command::single(Action::Future(Box::pin(async move {
                         Message::LoginAttemptComplete(
-                            api_key_new_with_email(auth_base_url, email, password, duration).await,
+                            do_login(server_api_url, email, password, duration).await,
                         )
                     })))
                 }
@@ -544,9 +595,16 @@ impl ProgramWithSubscription for Todos {
                         Ok(ApiKey {
                             key: Some(api_key), ..
                         }) => {
+                            // save in cache file
+                            let cache = TodosCache {
+                                server_api_url: self.server_api_url.clone().into(),
+                                api_key: api_key.clone(),
+                            };
+                            xdg_manager::write_cache("cache.json", &cache).unwrap();
+                            // switch state
                             self.state = State::not_connected(api_key, None);
                             // we need to now try to initialize the websocket connection
-                            Todos::attempt_connect()
+                            self.attempt_connect()
                         }
                         Ok(_) => {
                             state.error = Some(String::from("No ApiKey returned"));
@@ -561,9 +619,14 @@ impl ProgramWithSubscription for Todos {
                 _ => Command::none(),
             },
             Message::RetryConnect => match self.state {
+                State::Restored(ref mut state) => {
+                    self.state = State::not_connected(state.api_key.clone(), None);
+                    // we need to now try to initialize the websocket connection
+                    self.attempt_connect()
+                }
                 State::NotConnected(ref mut state) => {
                     state.error = None;
-                    Todos::attempt_connect()
+                    self.attempt_connect()
                 }
                 _ => Command::none(),
             },
@@ -731,6 +794,21 @@ impl ProgramWithSubscription for Todos {
                 .padding(10)
                 .into()
             }
+            Self {
+                state: State::Restored(_),
+                ..
+            } => button(
+                text("Resume Session")
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center)
+                    .height(Length::Fill)
+                    .width(Length::Fill),
+            )
+            .style(theme::Button::Text)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .on_press(Message::RetryConnect)
+            .into(),
             Self {
                 state: State::NotConnected(NotConnectedState { error, .. }),
                 expanded: false,
@@ -924,15 +1002,39 @@ impl ProgramWithSubscription for Todos {
     }
 }
 
-async fn api_key_new_with_email(
-    auth_base_url: String,
+async fn do_login(
+    server_api_url: Url,
     email: String,
     password: String,
     duration: i64,
 ) -> Result<ApiKey, String> {
     let client = reqwest::Client::new();
+
+    // get info
     let resp = client
-        .post(format!("{}/api_key/new_with_email", auth_base_url))
+        .get(server_api_url.join("info").map_err(report_url_error)?)
+        .send()
+        .await
+        .map_err(report_reqwest_error)?;
+
+    let info: Info = match resp.status().as_u16() {
+        200..=299 => Ok(resp.json().await.map_err(report_reqwest_error)?),
+        status => Err(format!(
+            "{}: {}",
+            status,
+            resp.text().await.map_err(report_reqwest_error)?
+        )),
+    }?;
+
+    let auth_pub_api_href = Url::parse(&info.auth_pub_api_href).map_err(report_url_error)?;
+
+    // get api key
+    let resp = client
+        .post(
+            auth_pub_api_href
+                .join("api_key/new_with_email")
+                .map_err(report_url_error)?,
+        )
         .json(&ApiKeyNewWithEmailProps {
             email,
             password,
@@ -942,10 +1044,13 @@ async fn api_key_new_with_email(
         .await
         .map_err(report_reqwest_error)?;
 
-    if resp.status().as_u16() == 200 {
-        Ok(resp.json().await.map_err(report_reqwest_error)?)
-    } else {
-        Err(resp.text().await.map_err(report_reqwest_error)?)
+    match resp.status().as_u16() {
+        200..=299 => Ok(resp.json().await.map_err(report_reqwest_error)?),
+        status => Err(format!(
+            "{}: {}",
+            status,
+            resp.text().await.map_err(report_reqwest_error)?
+        )),
     }
 }
 
@@ -1031,6 +1136,11 @@ pub fn report_tungstenite_error(e: tungstenite::error::Error) -> String {
 }
 
 pub fn report_wmhints_error(e: wm_hints::WmHintsError) -> String {
+    log::error!("{}", e);
+    e.to_string()
+}
+
+pub fn report_url_error(e: url::ParseError) -> String {
     log::error!("{}", e);
     e.to_string()
 }

@@ -1,4 +1,4 @@
-use std::io;
+use std::{error::Error, fmt::Display, io};
 
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -27,6 +27,18 @@ impl From<xdg::BaseDirectoriesError> for XdgError {
     }
 }
 
+impl Display for XdgError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            XdgError::IOError(e) => write!(f, "xdg: {}", e),
+            XdgError::SerdeError(e) => write!(f, "xdg: {}", e),
+            XdgError::XdgError(e) => write!(f, "xdg: {}", e),
+        }
+    }
+}
+
+impl Error for XdgError {}
+
 pub fn get_or_create_config<T>(filename: &str) -> Result<T, XdgError>
 where
     T: Serialize + DeserializeOwned + Default,
@@ -42,17 +54,21 @@ where
     }
 }
 
-pub fn load_cache_if_exists<T>(filename: &str) -> Result<T, XdgError>
+pub fn load_cache_if_exists<T>(filename: &str) -> Result<Option<T>, XdgError>
 where
-    T: DeserializeOwned + Default,
+    T: DeserializeOwned,
 {
     let path = xdg::BaseDirectories::with_prefix(crate::APP_NAME)?.place_state_file(filename)?;
-    Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
+    if path.exists() {
+        Ok(Some(serde_json::from_str(&std::fs::read_to_string(path)?)?))
+    } else {
+        Ok(None)
+    }
 }
 
-pub fn write_cache_if_exists<T>(filename: &str, value: &T) -> Result<(), XdgError>
+pub fn write_cache<T>(filename: &str, value: &T) -> Result<(), XdgError>
 where
-    T: Serialize + Default,
+    T: Serialize,
 {
     let path = xdg::BaseDirectories::with_prefix(crate::APP_NAME)?.place_state_file(filename)?;
     std::fs::write(path, serde_json::to_string_pretty(value)?)?;

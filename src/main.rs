@@ -25,10 +25,6 @@ pub static APP_NAME: &'static str = "statusbar";
 pub fn main() {
     env_logger::init();
 
-    // try to read config
-    let app_config =
-        xdg_manager::get_or_create_config::<todos::TodosConfig>("config.json").unwrap();
-
     // Initialize winit
     let event_loop =
         EventLoopBuilder::<<Todos as program_runner::ProgramWithSubscription>::Message>::with_user_event().build();
@@ -44,7 +40,7 @@ pub fn main() {
 
     let wm_state_mgr = wm_hints::create_state_mgr(&window).unwrap();
     // initialize app state
-    let todos = Todos::new(app_config, wm_state_mgr);
+    let todos = Todos::new(wm_state_mgr).unwrap();
 
     let mut viewport = Viewport::with_physical_size(
         Size::new(physical_size.width, physical_size.height),
