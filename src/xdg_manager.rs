@@ -74,3 +74,9 @@ where
     std::fs::write(path, serde_json::to_string_pretty(value)?)?;
     Ok(())
 }
+
+pub fn delete_cache(filename: &str) -> Result<(), XdgError> {
+    let path = xdg::BaseDirectories::with_prefix(crate::APP_NAME)?.place_state_file(filename)?;
+    std::fs::remove_file(path)?;
+    Ok(())
+}

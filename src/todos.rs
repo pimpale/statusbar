@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,6 +41,9 @@ static PASSWORD_INPUT_ID: Lazy<advanced_text_input::Id> =
 // logged in boxes
 static INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
+
+static CONFIG_FILENAME: &'static str = "config.json";
+static CACHE_FILENAME: &'static str = "cache.json";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TodosConfig {
@@ -86,6 +90,14 @@ impl State {
     fn not_connected(api_key: String, error: Option<String>) -> State {
         State::NotConnected(NotConnectedState { api_key, error })
     }
+    fn not_logged_in() -> State {
+        State::NotLoggedIn(NotLoggedInState {
+            email: String::new(),
+            password: String::new(),
+            view_password: false,
+            error: None,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -127,12 +139,15 @@ pub struct ConnectedState {
     input_value: String,
     active_id_val: Option<(String, String)>,
     snapshot: StateSnapshot,
+    pending_pings: HashSet<Vec<u8>>,
+    show_finished: bool,
 }
 
 enum ConnectedStateRecvKind {
     Nop,
     Op(WebsocketOp),
     Ping(Vec<u8>),
+    Pong(Vec<u8>),
 }
 
 impl ConnectedState {
@@ -148,7 +163,7 @@ impl ConnectedState {
                     id: utils::random_string(),
                 },
                 Op::RestoreFinished => WebsocketOpKind::RestoreFinishedTask {
-                    id: self.snapshot.finished.first().unwrap().id.clone(),
+                    id: self.snapshot.finished.last().unwrap().id.clone(),
                 },
                 Op::Pop(id, status) => WebsocketOpKind::FinishLiveTask { id, status },
                 Op::Edit(id, value) => WebsocketOpKind::EditLiveTask { id, value },
@@ -177,6 +192,7 @@ impl ConnectedState {
                     .map(|v| ConnectedStateRecvKind::Op(v))
                     .map_err(report_serde_error),
                 tungstenite::Message::Ping(data) => Ok(ConnectedStateRecvKind::Ping(data)),
+                tungstenite::Message::Pong(data) => Ok(ConnectedStateRecvKind::Pong(data)),
                 tungstenite::Message::Close(f) => Err(match f {
                     Some(f) => format!("connection closed: {}", f.reason),
                     None => String::from("connection closed unexpectedly"),
@@ -185,17 +201,6 @@ impl ConnectedState {
             },
             Some(Err(e)) => Err(e),
             None => Err(String::from("Lost connection")),
-        }
-    }
-}
-
-impl Default for NotLoggedInState {
-    fn default() -> Self {
-        NotLoggedInState {
-            email: String::new(),
-            password: String::new(),
-            view_password: false,
-            error: None,
         }
     }
 }
@@ -225,19 +230,20 @@ pub enum Message {
     ),
     // not connected page
     RetryConnect,
+    LogOut,
     // connected page
     EditInput(String),
     SubmitInput,
     EditActive(String),
     SetActive(Option<String>),
     Op(Op),
+    ToggleFinished,
     // Websocket Interactions
     WebsocketSendComplete(Result<(), String>),
     WebsocketRecvComplete(Option<Result<tungstenite::protocol::Message, String>>),
     // Websocket Ping
-    WebsocketPongRecvComplete(Result<(), String>),
-    WebsocketPongDeadlineArrived,
-    Yeet,
+    ShouldPing,
+    PingTimedOut(Vec<u8>),
 }
 
 #[derive(Debug, Clone)]
@@ -252,15 +258,15 @@ pub enum Op {
 impl Todos {
     pub fn new(wm_state: wm_hints::WmHintsState) -> Result<Todos, Box<dyn std::error::Error>> {
         // try to read config
-        let config = xdg_manager::get_or_create_config::<TodosConfig>("config.json").unwrap();
+        let config = xdg_manager::get_or_create_config::<TodosConfig>(CONFIG_FILENAME).unwrap();
 
-        let cache = xdg_manager::load_cache_if_exists::<TodosCache>("cache.json").unwrap();
+        let cache = xdg_manager::load_cache_if_exists::<TodosCache>(CACHE_FILENAME).unwrap();
 
         let state = match cache {
             Some(cache) if cache.server_api_url == config.server_api_url => {
                 State::from_cache(cache.api_key)
             }
-            _ => State::NotLoggedIn(NotLoggedInState::default()),
+            _ => State::not_logged_in(),
         };
 
         let server_api_url = Url::parse(&config.server_api_url)?;
@@ -338,6 +344,13 @@ impl Todos {
             )
         })))
     }
+
+    fn delay_message(duration: Duration, m: Message) -> Command<Message> {
+        Command::single(Action::Future(Box::pin(async move {
+            tokio::time::sleep(duration).await;
+            m
+        })))
+    }
 }
 
 impl ProgramWithSubscription for Todos {
@@ -346,10 +359,6 @@ impl ProgramWithSubscription for Todos {
 
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::Yeet => {
-                println!("yeet");
-                Command::none()
-            }
             Message::EventOccurred(event) => match event {
                 // grab keyboard focus on cursor enter
                 iced_native::Event::Mouse(iced_native::mouse::Event::CursorEntered) => {
@@ -539,6 +548,21 @@ impl ProgramWithSubscription for Todos {
                 State::Connected(ref mut state) => state.wsop(op),
                 _ => Command::none(),
             },
+            Message::LogOut => match self.state {
+                State::Connected(_) | State::NotConnected(_) => {
+                    xdg_manager::delete_cache(CACHE_FILENAME).unwrap();
+                    self.state = State::not_logged_in();
+                    Command::none()
+                }
+                _ => Command::none(),
+            },
+            Message::ToggleFinished => match self.state {
+                State::Connected(ref mut state) => {
+                    state.show_finished = !state.show_finished;
+                    Command::none()
+                }
+                _ => Command::none(),
+            },
             Message::EditEmail(val) => match self.state {
                 State::NotLoggedIn(ref mut state) => {
                     state.email = val;
@@ -642,10 +666,12 @@ impl ProgramWithSubscription for Todos {
                             websocket_send: sink.clone(),
                             input_value: String::new(),
                             active_id_val: None,
+                            pending_pings: HashSet::new(),
                             snapshot: StateSnapshot {
                                 live: vec![].into(),
                                 finished: vec![],
                             },
+                            show_finished: false,
                         });
 
                         let init_msg = tungstenite::protocol::Message::Text(
@@ -657,6 +683,8 @@ impl ProgramWithSubscription for Todos {
                             Todos::send(sink, init_msg),
                             // start recieving responses
                             Todos::recv(stream),
+                            // start pinging
+                            Todos::delay_message(Duration::from_secs(5), Message::ShouldPing),
                             // focus the input bar
                             advanced_text_input::focus(INPUT_ID.clone()),
                         ])
@@ -691,6 +719,12 @@ impl ProgramWithSubscription for Todos {
                                 state.websocket_send.clone(),
                                 tungstenite::protocol::Message::Pong(data),
                             ),
+                            ConnectedStateRecvKind::Pong(data) => {
+                                // remove the corresponding ping from the hashset
+                                state.pending_pings.remove(&data);
+                                // Wait 5 seconds before sending another ping
+                                Todos::delay_message(Duration::from_secs(5), Message::ShouldPing)
+                            }
                             ConnectedStateRecvKind::Op(WebsocketOp { kind, .. }) => {
                                 apply_operation(
                                     &mut state.snapshot,
@@ -706,6 +740,36 @@ impl ProgramWithSubscription for Todos {
                         Command::none()
                     }
                 },
+                _ => Command::none(),
+            },
+            Message::ShouldPing => match self.state {
+                State::Connected(ref mut state) => {
+                    let random_string = utils::random_string().into_bytes();
+                    state.pending_pings.insert(random_string.clone());
+                    Command::batch([
+                        Todos::send(
+                            state.websocket_send.clone(),
+                            tungstenite::protocol::Message::Ping(random_string.clone()),
+                        ),
+                        Todos::delay_message(
+                            Duration::from_secs(5),
+                            Message::PingTimedOut(random_string),
+                        ),
+                    ])
+                }
+                _ => Command::none(),
+            },
+            Message::PingTimedOut(data) => match self.state {
+                State::Connected(ref mut state) => {
+                    if state.pending_pings.contains(&data) {
+                        // we didn't receive pong in time
+                        self.state = State::not_connected(
+                            state.api_key.clone(),
+                            Some(String::from("websocket timed out")),
+                        );
+                    }
+                    Command::none()
+                }
                 _ => Command::none(),
             },
         }
@@ -820,8 +884,7 @@ impl ProgramWithSubscription for Todos {
                     Some(e) => text(e).style(Color::from_rgb(1.0, 0.0, 0.0)),
                     None => text("Connecting..."),
                 };
-                // button should fill whole screen
-                button(
+                let open_button = button(
                     text.horizontal_alignment(alignment::Horizontal::Center)
                         .vertical_alignment(alignment::Vertical::Center)
                         .height(Length::Fill)
@@ -831,14 +894,31 @@ impl ProgramWithSubscription for Todos {
                 .height(Length::Fill)
                 .width(Length::Fill)
                 .on_press(Message::ExpandDock)
-                .into()
+                .into();
+
+                if error.is_some() {
+                    row(vec![
+                        open_button,
+                        button("Retry").on_press(Message::RetryConnect).into(),
+                    ])
+                    .spacing(10)
+                    .padding(10)
+                    .into()
+                } else {
+                    open_button
+                }
             }
             Self {
                 state: State::NotConnected(NotConnectedState { error, .. }),
                 expanded: true,
                 ..
             } => row(vec![
-                button("Collapse").on_press(Message::CollapseDock).into(),
+                column(vec![
+                    button("Collapse").on_press(Message::CollapseDock).into(),
+                    button("Log Out").on_press(Message::LogOut).into(),
+                ])
+                .spacing(10)
+                .into(),
                 column(match error {
                     Some(error) => vec![
                         text(error)
@@ -906,8 +986,9 @@ impl ProgramWithSubscription for Todos {
                 state:
                     State::Connected(ConnectedState {
                         input_value,
-                        snapshot: StateSnapshot { live, .. },
+                        snapshot: StateSnapshot { live, finished },
                         active_id_val,
+                        show_finished,
                         ..
                     }),
                 expanded: true,
@@ -922,71 +1003,112 @@ impl ProgramWithSubscription for Todos {
                 .on_focus(Message::SetActive(None))
                 .on_submit(Message::SubmitInput);
 
-                let tasks: Element<_, Renderer> = if live.len() > 0 {
+                let tasks: Element<_, Renderer> = if !*show_finished {
+                    if live.len() > 0 {
+                        column(
+                            live.iter()
+                                .enumerate()
+                                .map(|(i, task)| {
+                                    let header = text(format!("{}|", i)).size(25);
+
+                                    match active_id_val {
+                                        Some((active_id, val)) if active_id == &task.id => {
+                                            row(vec![
+                                                header.into(),
+                                                button("Task Succeeded")
+                                                    .style(theme::Button::Positive)
+                                                    .on_press(Message::Op(Op::Pop(
+                                                        task.id.clone(),
+                                                        TaskStatus::Succeeded,
+                                                    )))
+                                                    .into(),
+                                                advanced_text_input::AdvancedTextInput::new(
+                                                    "Edit Task",
+                                                    val,
+                                                    Message::EditActive,
+                                                )
+                                                .id(ACTIVE_INPUT_ID.clone())
+                                                .on_submit(Message::SetActive(None))
+                                                .into(),
+                                                button("Task Failed")
+                                                    .style(theme::Button::Destructive)
+                                                    .on_press(Message::Op(Op::Pop(
+                                                        task.id.clone(),
+                                                        TaskStatus::Failed,
+                                                    )))
+                                                    .into(),
+                                                button("Task Obsoleted")
+                                                    .style(theme::Button::Secondary)
+                                                    .on_press(Message::Op(Op::Pop(
+                                                        task.id.clone(),
+                                                        TaskStatus::Obsoleted,
+                                                    )))
+                                                    .into(),
+                                            ])
+                                            .spacing(10)
+                                            .into()
+                                        }
+                                        _ => row(vec![
+                                            header.into(),
+                                            button(text(&task.value))
+                                                .on_press(Message::SetActive(Some(task.id.clone())))
+                                                .style(theme::Button::Text)
+                                                .width(Length::Fill)
+                                                .into(),
+                                        ])
+                                        .spacing(10)
+                                        .into(),
+                                    }
+                                })
+                                .collect(),
+                        )
+                        // pad right to avoid clipping scrollable
+                        .padding([0, 15, 0, 0])
+                        .into()
+                    } else {
+                        text("You have not created a task yet...").size(25).into()
+                    }
+                } else {
                     column(
-                        live.iter()
+                        finished
+                            .iter()
+                            .rev()
                             .enumerate()
                             .map(|(i, task)| {
-                                let header = text(format!("{}|", i)).size(25);
-
-                                match active_id_val {
-                                    Some((active_id, val)) if active_id == &task.id => row(vec![
-                                        header.into(),
-                                        button("Task Succeeded")
-                                            .style(theme::Button::Positive)
-                                            .on_press(Message::Op(Op::Pop(
-                                                task.id.clone(),
-                                                TaskStatus::Succeeded,
-                                            )))
-                                            .into(),
-                                        advanced_text_input::AdvancedTextInput::new(
-                                            "Edit Task",
-                                            val,
-                                            Message::EditActive,
-                                        )
-                                        .id(ACTIVE_INPUT_ID.clone())
-                                        .on_submit(Message::SetActive(None))
-                                        .into(),
-                                        button("Task Failed")
-                                            .style(theme::Button::Destructive)
-                                            .on_press(Message::Op(Op::Pop(
-                                                task.id.clone(),
-                                                TaskStatus::Failed,
-                                            )))
-                                            .into(),
-                                        button("Task Obsoleted")
-                                            .style(theme::Button::Secondary)
-                                            .on_press(Message::Op(Op::Pop(
-                                                task.id.clone(),
-                                                TaskStatus::Obsoleted,
-                                            )))
-                                            .into(),
-                                    ])
-                                    .spacing(10)
+                                row(vec![
+                                    text(format!("{}|", i)).size(25).into(),
+                                    text(match task.status {
+                                        TaskStatus::Succeeded => "Succeeded",
+                                        TaskStatus::Failed => "Failed",
+                                        TaskStatus::Obsoleted => "Obsoleted",
+                                    })
                                     .into(),
-                                    _ => row(vec![
-                                        header.into(),
-                                        button(text(&task.value))
-                                            .on_press(Message::SetActive(Some(task.id.clone())))
-                                            .style(theme::Button::Text)
-                                            .width(Length::Fill)
-                                            .into(),
-                                    ])
-                                    .spacing(10)
-                                    .into(),
-                                }
+                                    text(&task.value).into(),
+                                ])
+                                .spacing(10)
+                                .width(Length::Fill)
+                                .into()
                             })
                             .collect(),
                     )
                     // pad right to avoid clipping scrollable
                     .padding([0, 15, 0, 0])
                     .into()
-                } else {
-                    text("You have not created a task yet...").size(25).into()
                 };
 
                 row(vec![
-                    button("Collapse").on_press(Message::CollapseDock).into(),
+                    column(vec![
+                        button("Collapse").on_press(Message::CollapseDock).into(),
+                        button(match show_finished {
+                            true => "Show Live Tasks",
+                            false => "Show Finished Tasks",
+                        })
+                        .on_press(Message::ToggleFinished)
+                        .into(),
+                        button("Log Out").on_press(Message::LogOut).into(),
+                    ])
+                    .spacing(10)
+                    .into(),
                     column(vec![input.into(), scrollable(tasks).into()])
                         .spacing(10)
                         .width(Length::Shrink)
