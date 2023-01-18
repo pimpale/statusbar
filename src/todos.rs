@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -150,6 +150,15 @@ enum ConnectedStateRecvKind {
     Pong(Vec<u8>),
 }
 
+#[derive(Debug, Clone)]
+pub enum Op {
+    NewLive(String),
+    RestoreFinished(String),
+    Pop(String, TaskStatus),
+    Edit(String, String),
+    Move(String, String),
+}
+
 impl ConnectedState {
     // creates a command from an operation
     // (operation must be valid)
@@ -162,15 +171,10 @@ impl ConnectedState {
                     value,
                     id: utils::random_string(),
                 },
-                Op::RestoreFinished => WebsocketOpKind::RestoreFinishedTask {
-                    id: self.snapshot.finished.last().unwrap().id.clone(),
-                },
+                Op::RestoreFinished(id) => WebsocketOpKind::RestoreFinishedTask { id },
                 Op::Pop(id, status) => WebsocketOpKind::FinishLiveTask { id, status },
                 Op::Edit(id, value) => WebsocketOpKind::EditLiveTask { id, value },
-                Op::Move(del, ins) => WebsocketOpKind::MvLiveTask {
-                    id_del: self.snapshot.live[del].id.clone(),
-                    id_ins: self.snapshot.live[ins].id.clone(),
-                },
+                Op::Move(id_del, id_ins) => WebsocketOpKind::MvLiveTask { id_del, id_ins },
             },
         };
 
@@ -244,15 +248,6 @@ pub enum Message {
     // Websocket Ping
     ShouldPing,
     PingTimedOut(Vec<u8>),
-}
-
-#[derive(Debug, Clone)]
-pub enum Op {
-    NewLive(String),
-    RestoreFinished,
-    Pop(String, TaskStatus),
-    Edit(String, String),
-    Move(usize, usize),
 }
 
 impl Todos {
@@ -450,48 +445,86 @@ impl ProgramWithSubscription for Todos {
                 State::Connected(ref mut state) => {
                     let val = std::mem::take(&mut state.input_value);
                     match val.split_once(" ").map(|x| x.0).unwrap_or(val.as_str()) {
-                        "q" => Command::single(Action::Future(Box::pin(async {
+                        "x" => panic!(),
+                        "c" => Command::single(Action::Future(Box::pin(async {
                             Message::CollapseDock
                         }))),
-                        "x" => panic!(),
-                        "ps" => match state.snapshot.live.front() {
+                        "s" => match state.snapshot.live.front() {
                             None => Command::none(),
                             Some(task) => {
                                 state.wsop(Op::Pop(task.id.clone(), TaskStatus::Succeeded))
                             }
                         },
-                        "pf" => match state.snapshot.live.front() {
+                        "f" => match state.snapshot.live.front() {
                             None => Command::none(),
                             Some(task) => state.wsop(Op::Pop(task.id.clone(), TaskStatus::Failed)),
                         },
-                        "po" => match state.snapshot.live.front() {
+                        "o" => match state.snapshot.live.front() {
                             None => Command::none(),
                             Some(task) => {
                                 state.wsop(Op::Pop(task.id.clone(), TaskStatus::Obsoleted))
                             }
                         },
-                        "r" => match state.snapshot.live.front() {
-                            None => Command::none(),
-                            _ => state.wsop(Op::RestoreFinished),
-                        },
-                        "mv" => {
-                            if let Ok((i, j)) = sscanf::scanf!(val, "mv {} {}", usize, usize) {
-                                if i < state.snapshot.live.len() && j < state.snapshot.live.len() {
-                                    state.wsop(Op::Move(i, j))
+                        "r" => {
+                            let f = &state.snapshot.finished;
+                            if let Ok(i) = sscanf::scanf!(val, "r {}", usize) {
+                                if i < f.len() {
+                                    state.wsop(Op::RestoreFinished(f[i].id.clone()))
                                 } else {
                                     Command::none()
+                                }
+                            } else if val == "r" {
+                                if 0 < f.len() {
+                                    state.wsop(Op::RestoreFinished(f[0].id.clone()))
+                                } else {
+                                    Command::none()
+                                }
+                            } else {
+                                Command::none()
+                            }
+                        }
+                        "q" => {
+                            let l = &state.snapshot.live;
+                            if let Ok(i) = sscanf::scanf!(val, "q {}", usize) {
+                                match (l.get(i), l.back()) {
+                                    (Some(f), Some(b)) if l.len() > 1 => {
+                                        state.wsop(Op::Move(f.id.clone(), b.id.clone()))
+                                    }
+                                    _ => Command::none(),
+                                }
+                            } else if val == "q" {
+                                match (l.front(), l.back()) {
+                                    (Some(f), Some(b)) if l.len() > 1 => {
+                                        state.wsop(Op::Move(f.id.clone(), b.id.clone()))
+                                    }
+                                    _ => Command::none(),
+                                }
+                            } else {
+                                Command::none()
+                            }
+                        }
+                        "mv" => {
+                            let l = &state.snapshot.live;
+                            if let Ok((i, j)) = sscanf::scanf!(val, "mv {} {}", usize, usize) {
+                                match (l.get(i), l.get(j)) {
+                                    (Some(f), Some(b)) if i != j => {
+                                        state.wsop(Op::Move(f.id.clone(), b.id.clone()))
+                                    }
+                                    _ => Command::none(),
                                 }
                             } else if let Ok(i) = sscanf::scanf!(val, "mv {}", usize) {
-                                if i < state.snapshot.live.len() {
-                                    state.wsop(Op::Move(i, 0))
-                                } else {
-                                    Command::none()
+                                match (l.front(), l.get(i)) {
+                                    (Some(f), Some(b)) if l.len() > 1 => {
+                                        state.wsop(Op::Move(f.id.clone(), b.id.clone()))
+                                    }
+                                    _ => Command::none(),
                                 }
                             } else if val == "mv" {
-                                if state.snapshot.live.len() >= 2 {
-                                    state.wsop(Op::Move(0, 1))
-                                } else {
-                                    Command::none()
+                                match (l.front(), l.get(1)) {
+                                    (Some(f), Some(b)) if l.len() > 1 => {
+                                        state.wsop(Op::Move(f.id.clone(), b.id.clone()))
+                                    }
+                                    _ => Command::none(),
                                 }
                             } else {
                                 Command::none()
@@ -668,8 +701,8 @@ impl ProgramWithSubscription for Todos {
                             active_id_val: None,
                             pending_pings: HashSet::new(),
                             snapshot: StateSnapshot {
-                                live: vec![].into(),
-                                finished: vec![],
+                                live: VecDeque::new(),
+                                finished: VecDeque::new(),
                             },
                             show_finished: false,
                         });
@@ -1072,16 +1105,23 @@ impl ProgramWithSubscription for Todos {
                     column(
                         finished
                             .iter()
-                            .rev()
                             .enumerate()
                             .map(|(i, task)| {
                                 row(vec![
                                     text(format!("{}|", i)).size(25).into(),
-                                    text(match task.status {
-                                        TaskStatus::Succeeded => "Succeeded",
-                                        TaskStatus::Failed => "Failed",
-                                        TaskStatus::Obsoleted => "Obsoleted",
-                                    })
+                                    match task.status {
+                                        TaskStatus::Succeeded => {
+                                            text("SUCCEEDED").style(Color::from_rgb(0.0, 1.0, 0.0))
+                                        }
+                                        TaskStatus::Failed => {
+                                            text("FAILED").style(Color::from_rgb(1.0, 0.0, 0.0))
+                                        }
+                                        TaskStatus::Obsoleted => {
+                                            text("OBSOLETED").style(Color::from_rgb(0.7, 0.7, 0.7))
+                                        }
+                                    }
+                                    .width(Length::Units(80))
+                                    .size(20)
                                     .into(),
                                     text(&task.value).into(),
                                 ])
@@ -1198,7 +1238,7 @@ fn apply_operation(
         WebsocketOpKind::RestoreFinishedTask { id } => {
             // if it was found in the finished list, push it to the front
             if let Some(position) = finished.iter().position(|x| x.id == id) {
-                let FinishedTask { id, value, .. } = finished.remove(position);
+                let FinishedTask { id, value, .. } = finished.remove(position).unwrap();
                 live.push_front(LiveTask { id, value });
             }
         }
@@ -1234,7 +1274,7 @@ fn apply_operation(
                 }
             }
             if let Some(pos_in_live) = live.iter().position(|x| x.id == id) {
-                finished.push(FinishedTask {
+                finished.push_front(FinishedTask {
                     id,
                     value: live.remove(pos_in_live).unwrap().value,
                     status,
