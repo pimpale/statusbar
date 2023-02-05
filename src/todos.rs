@@ -449,6 +449,9 @@ impl ProgramWithSubscription for Todos {
                         "c" => Command::single(Action::Future(Box::pin(async {
                             Message::CollapseDock
                         }))),
+                        "t" => Command::single(Action::Future(Box::pin(async {
+                            Message::ToggleFinished
+                        }))),
                         "s" => match state.snapshot.live.front() {
                             None => Command::none(),
                             Some(task) => {
@@ -513,14 +516,14 @@ impl ProgramWithSubscription for Todos {
                                     _ => Command::none(),
                                 }
                             } else if let Ok(i) = sscanf::scanf!(val, "mv {}", usize) {
-                                match (l.front(), l.get(i)) {
+                                match (l.get(i), l.front()) {
                                     (Some(f), Some(b)) if l.len() > 1 => {
                                         state.wsop(Op::Move(f.id.clone(), b.id.clone()))
                                     }
                                     _ => Command::none(),
                                 }
                             } else if val == "mv" {
-                                match (l.front(), l.get(1)) {
+                                match (l.get(1), l.front()) {
                                     (Some(f), Some(b)) if l.len() > 1 => {
                                         state.wsop(Op::Move(f.id.clone(), b.id.clone()))
                                     }
