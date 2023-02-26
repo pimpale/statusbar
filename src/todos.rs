@@ -20,7 +20,6 @@ use once_cell::sync::Lazy;
 
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use todoproxy_api::request::WebsocketInitMessage;
 use todoproxy_api::response::Info;
 use todoproxy_api::{
     FinishedTask, LiveTask, StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind,
@@ -80,6 +79,7 @@ pub enum State {
     NotLoggedIn(NotLoggedInState),
     Restored(RestoredState),
     NotConnected(NotConnectedState),
+    ManageSettings(ManageSettingsState),
     Connected(ConnectedState),
 }
 
@@ -89,6 +89,13 @@ impl State {
     }
     fn not_connected(api_key: String, error: Option<String>) -> State {
         State::NotConnected(NotConnectedState { api_key, error })
+    }
+    fn manage_settings(api_key: String) -> State {
+        State::ManageSettings(ManageSettingsState {
+            api_key,
+            integration_api_key: String::new(),
+            integration_user_id: String::new(),
+        })
     }
     fn not_logged_in() -> State {
         State::NotLoggedIn(NotLoggedInState {
@@ -112,6 +119,13 @@ pub struct NotLoggedInState {
 pub struct NotConnectedState {
     api_key: String,
     error: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ManageSettingsState {
+    api_key: String,
+    integration_user_id: String,
+    integration_api_key: String,
 }
 
 #[derive(Debug)]
@@ -148,6 +162,12 @@ enum ConnectedStateRecvKind {
     Op(WebsocketOp),
     Ping(Vec<u8>),
     Pong(Vec<u8>),
+}
+
+enum ConnectionCloseKind {
+    IntegrationNotFound,
+    Unauthorized,
+    Other(String),
 }
 
 #[derive(Debug, Clone)]
@@ -189,22 +209,29 @@ impl ConnectedState {
     fn handle_recv(
         &self,
         result: Option<Result<tungstenite::protocol::Message, String>>,
-    ) -> Result<ConnectedStateRecvKind, String> {
+    ) -> Result<ConnectedStateRecvKind, ConnectionCloseKind> {
         match result {
             Some(Ok(msg)) => match msg {
                 tungstenite::Message::Text(msg) => serde_json::from_str(&msg)
                     .map(|v| ConnectedStateRecvKind::Op(v))
-                    .map_err(report_serde_error),
+                    .map_err(report_serde_error)
+                    .map_err(ConnectionCloseKind::Other),
                 tungstenite::Message::Ping(data) => Ok(ConnectedStateRecvKind::Ping(data)),
                 tungstenite::Message::Pong(data) => Ok(ConnectedStateRecvKind::Pong(data)),
                 tungstenite::Message::Close(f) => Err(match f {
-                    Some(f) => format!("connection closed: {}", f.reason),
-                    None => String::from("connection closed unexpectedly"),
+                    Some(f) => match f.reason.to_string().as_str() {
+                        "IntegrationNotFound" => ConnectionCloseKind::IntegrationNotFound,
+                        "Unauthorized" => ConnectionCloseKind::Unauthorized,
+                        _ => ConnectionCloseKind::Other(f.reason.to_string()),
+                    },
+                    None => {
+                        ConnectionCloseKind::Other(String::from("connection closed unexpectedly"))
+                    }
                 }),
                 _ => Ok(ConnectedStateRecvKind::Nop),
             },
-            Some(Err(e)) => Err(e),
-            None => Err(String::from("Lost connection")),
+            Some(Err(e)) => Err(ConnectionCloseKind::Other(e)),
+            None => Err(ConnectionCloseKind::Other(String::from("Lost connection"))),
         }
     }
 }
@@ -288,7 +315,7 @@ impl Todos {
         )))
     }
 
-    fn attempt_connect(&self) -> Command<Message> {
+    fn attempt_connect(&self, api_key: &str) -> Command<Message> {
         let mut ws_task_updates_url = self.server_api_url.join("ws/task_updates").unwrap();
 
         if ws_task_updates_url.scheme() == "https" {
@@ -296,6 +323,9 @@ impl Todos {
         } else {
             ws_task_updates_url.set_scheme("ws").unwrap();
         }
+
+        // set parameters
+        ws_task_updates_url.set_query(Some(format!("api_key={}", api_key).as_str()));
 
         Command::single(Action::Future(Box::pin(async move {
             Message::ConnectAttemptComplete(
@@ -663,10 +693,13 @@ impl ProgramWithSubscription for Todos {
                                 api_key: api_key.clone(),
                             };
                             xdg_manager::write_cache("cache.json", &cache).unwrap();
+
+                            // we need to now try to initialize the websocket connection
+                            let connect_attempt_result = self.attempt_connect(&api_key);
                             // switch state
                             self.state = State::not_connected(api_key, None);
-                            // we need to now try to initialize the websocket connection
-                            self.attempt_connect()
+                            // return the result
+                            connect_attempt_result
                         }
                         Ok(_) => {
                             state.error = Some(String::from("No ApiKey returned"));
@@ -682,13 +715,15 @@ impl ProgramWithSubscription for Todos {
             },
             Message::RetryConnect => match self.state {
                 State::Restored(ref mut state) => {
-                    self.state = State::not_connected(state.api_key.clone(), None);
                     // we need to now try to initialize the websocket connection
-                    self.attempt_connect()
+                    let api_key = state.api_key.clone();
+                    self.state = State::not_connected(state.api_key.clone(), None);
+                    self.attempt_connect(&api_key)
                 }
                 State::NotConnected(ref mut state) => {
                     state.error = None;
-                    self.attempt_connect()
+                    let api_key = &state.api_key.clone();
+                    self.attempt_connect(api_key)
                 }
                 _ => Command::none(),
             },
@@ -710,13 +745,7 @@ impl ProgramWithSubscription for Todos {
                             show_finished: false,
                         });
 
-                        let init_msg = tungstenite::protocol::Message::Text(
-                            serde_json::to_string(&WebsocketInitMessage { api_key }).unwrap(),
-                        );
-
                         Command::batch([
-                            // send the initial message
-                            Todos::send(sink, init_msg),
                             // start recieving responses
                             Todos::recv(stream),
                             // start pinging
@@ -771,7 +800,15 @@ impl ProgramWithSubscription for Todos {
                             }
                         },
                     ]),
-                    Err(e) => {
+                    Err(ConnectionCloseKind::Unauthorized) => {
+                        self.state = State::not_logged_in();
+                        Command::none()
+                    }
+                    Err(ConnectionCloseKind::IntegrationNotFound) => {
+                        self.state = State::manage_settings(state.api_key.clone());
+                        Command::none()
+                    }
+                    Err(ConnectionCloseKind::Other(e)) => {
                         self.state = State::not_connected(state.api_key.clone(), Some(e));
                         Command::none()
                     }
@@ -896,6 +933,90 @@ impl ProgramWithSubscription for Todos {
                 .padding(10)
                 .into()
             }
+            Self {
+                state: State::ManageSettings(_),
+                expanded: false,
+                ..
+            } => button(
+                text("Click to Manage Settings")
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center)
+                    .height(Length::Fill)
+                    .width(Length::Fill),
+            )
+            .style(theme::Button::Text)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .on_press(Message::ExpandDock)
+            .into(),
+            Self {
+                state:
+                    State::ManageSettings(ManageSettingsState{
+                        integration_api_key,
+                        integration_user_id,
+                        error,
+                        ..
+                    }),
+                expanded: true,
+                ..
+            } => {
+                let email_input =
+                    advanced_text_input::AdvancedTextInput::new("Email", email, Message::EditEmail)
+                        .id(EMAIL_INPUT_ID.clone())
+                        .on_submit(Message::SubmitEmail);
+
+                let mut password_input = advanced_text_input::AdvancedTextInput::new(
+                    "Password",
+                    password,
+                    Message::EditPassword,
+                )
+                .id(PASSWORD_INPUT_ID.clone())
+                .on_submit(Message::SubmitPassword);
+
+                if !view_password {
+                    password_input = password_input.password();
+                }
+
+                let error = match error {
+                    Some(error) => text(error).style(Color::from([1.0, 0.0, 0.0])),
+                    None => text(""),
+                };
+
+                let submit_button = button("Submit").on_press(Message::AttemptLogin);
+
+                row(vec![
+                    column(vec![
+                        button("Collapse")
+                            .on_press(Message::CollapseDock)
+                            .width(Length::Shrink)
+                            .into(),
+                        button(if *view_password {
+                            "Hide Password"
+                        } else {
+                            "View Password"
+                        })
+                        .on_press(Message::TogglePasswordView)
+                        .width(Length::Shrink)
+                        .into(),
+                    ])
+                    .spacing(10)
+                    .width(Length::Shrink)
+                    .into(),
+                    column(vec![
+                        email_input.into(),
+                        password_input.into(),
+                        submit_button.into(),
+                        error.into(),
+                    ])
+                    .spacing(10)
+                    .width(Length::Shrink)
+                    .into(),
+                ])
+                .spacing(10)
+                .padding(10)
+                .into()
+            }
+
             Self {
                 state: State::Restored(_),
                 ..
@@ -1123,7 +1244,7 @@ impl ProgramWithSubscription for Todos {
                                             text("OBSOLETED").style(Color::from_rgb(0.7, 0.7, 0.7))
                                         }
                                     }
-                                    .width(Length::Units(80))
+                                    .width(80.0)
                                     .size(20)
                                     .into(),
                                     text(&task.value).into(),

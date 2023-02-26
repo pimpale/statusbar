@@ -327,22 +327,23 @@ fn run_command<P, E>(
                 window::Action::Move { x, y } => {
                     window.set_outer_position(winit::dpi::LogicalPosition { x, y });
                 }
-                window::Action::SetMode(mode) => {
+                window::Action::ChangeMode(mode) => {
                     window.set_visible(conversion::visible(mode));
                     window.set_fullscreen(conversion::fullscreen(window.primary_monitor(), mode));
                 }
-                window::Action::ToggleMaximize => window.set_maximized(!window.is_maximized()),
                 window::Action::FetchMode(tag) => {
                     let mode = if window.is_visible().unwrap_or(true) {
                         conversion::mode(window.fullscreen())
                     } else {
-                        iced_winit::window::Mode::Hidden
+                        window::Mode::Hidden
                     };
 
                     proxy
                         .send_event(tag(mode))
                         .expect("Send message to event loop");
                 }
+                window::Action::ToggleMaximize => window.set_maximized(!window.is_maximized()),
+
                 window::Action::Close => {
                     todo!();
                 }
@@ -351,6 +352,14 @@ fn run_command<P, E>(
                     window.request_user_attention(user_attention.map(conversion::user_attention))
                 }
                 window::Action::GainFocus => window.focus_window(),
+                window::Action::ChangeAlwaysOnTop(on_top) => {
+                    window.set_always_on_top(on_top);
+                }
+                window::Action::FetchId(tag) => {
+                    proxy
+                        .send_event(tag(window.id().into()))
+                        .expect("Send message to event loop");
+                }
             },
             command::Action::Widget(action) => {
                 let mut current_cache = std::mem::take(cache);

@@ -25,8 +25,8 @@ use iced_native::widget::operation::{self, Operation};
 use iced_native::widget::tree::{self, Tree};
 use iced_native::window;
 use iced_native::{
-    Clipboard, Color, Command, Element, Layout, Length, Padding, Point,
-    Rectangle, Shell, Size, Vector, Widget,
+    Clipboard, Color, Command, Element, Layout, Length, Padding, Point, Rectangle, Shell, Size,
+    Vector, Widget,
 };
 
 pub use iced_style::text_input::{Appearance, StyleSheet};
@@ -64,7 +64,7 @@ where
     font: Renderer::Font,
     width: Length,
     padding: Padding,
-    size: Option<u16>,
+    size: Option<f32>,
     on_change: Box<dyn Fn(String) -> Message + 'a>,
     on_paste: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_submit: Option<Message>,
@@ -96,7 +96,7 @@ where
             is_secure: false,
             font: Default::default(),
             width: Length::Fill,
-            padding: Padding::new(5),
+            padding: Padding::new(5.0),
             size: None,
             on_change: Box::new(on_change),
             on_paste: None,
@@ -121,10 +121,7 @@ where
 
     /// Sets the message that should be produced when some text is pasted into
     /// the [`AdvancedTextInput`].
-    pub fn on_paste(
-        mut self,
-        on_paste: impl Fn(String) -> Message + 'a,
-    ) -> Self {
+    pub fn on_paste(mut self, on_paste: impl Fn(String) -> Message + 'a) -> Self {
         self.on_paste = Some(Box::new(on_paste));
         self
     }
@@ -149,7 +146,7 @@ where
     }
 
     /// Sets the text size of the [`AdvancedTextInput`].
-    pub fn size(mut self, size: u16) -> Self {
+    pub fn size(mut self, size: f32) -> Self {
         self.size = Some(size);
         self
     }
@@ -176,10 +173,7 @@ where
     }
 
     /// Sets the style of the [`AdvancedTextInput`].
-    pub fn style(
-        mut self,
-        style: impl Into<<Renderer::Theme as StyleSheet>::Style>,
-    ) -> Self {
+    pub fn style(mut self, style: impl Into<<Renderer::Theme as StyleSheet>::Style>) -> Self {
         self.style = style.into();
         self
     }
@@ -213,8 +207,7 @@ where
     }
 }
 
-impl<'a, Message, Renderer> Widget<Message, Renderer>
-    for AdvancedTextInput<'a, Message, Renderer>
+impl<'a, Message, Renderer> Widget<Message, Renderer> for AdvancedTextInput<'a, Message, Renderer>
 where
     Message: Clone,
     Renderer: text::Renderer,
@@ -236,11 +229,7 @@ where
         Length::Shrink
     }
 
-    fn layout(
-        &self,
-        renderer: &Renderer,
-        limits: &layout::Limits,
-    ) -> layout::Node {
+    fn layout(&self, renderer: &Renderer, limits: &layout::Limits) -> layout::Node {
         layout(renderer, limits, self.width, self.padding, self.size)
     }
 
@@ -381,10 +370,7 @@ pub fn move_cursor_to_front<Message: 'static>(id: Id) -> Command<Message> {
 
 /// Produces a [`Command`] that moves the cursor of the [`AdvancedTextInput`] with the given [`Id`] to the
 /// provided position.
-pub fn move_cursor_to<Message: 'static>(
-    id: Id,
-    position: usize,
-) -> Command<Message> {
+pub fn move_cursor_to<Message: 'static>(id: Id, position: usize) -> Command<Message> {
     Command::widget(operation::text_input::move_cursor_to(id.0, position))
 }
 
@@ -399,7 +385,7 @@ pub fn layout<Renderer>(
     limits: &layout::Limits,
     width: Length,
     padding: Padding,
-    size: Option<u16>,
+    size: Option<f32>,
 ) -> layout::Node
 where
     Renderer: text::Renderer,
@@ -408,13 +394,10 @@ where
 
     let padding = padding.fit(Size::ZERO, limits.max());
 
-    let limits = limits
-        .pad(padding)
-        .width(width)
-        .height(Length::Units(text_size));
+    let limits = limits.pad(padding).width(width).height(text_size);
 
     let mut text = layout::Node::new(limits.resolve(Size::ZERO));
-    text.move_to(Point::new(padding.left.into(), padding.top.into()));
+    text.move_to(Point::new(padding.left, padding.top));
 
     layout::Node::with_children(text.size().pad(padding), vec![text])
 }
@@ -429,7 +412,7 @@ pub fn update<'a, Message, Renderer>(
     clipboard: &mut dyn Clipboard,
     shell: &mut Shell<'_, Message>,
     value: &mut Value,
-    size: Option<u16>,
+    size: Option<f32>,
     font: &Renderer::Font,
     is_secure: bool,
     on_change: &dyn Fn(String) -> Message,
@@ -466,8 +449,7 @@ where
                 let text_layout = layout.children().next().unwrap();
                 let target = cursor_position.x - text_layout.bounds().x;
 
-                let click =
-                    mouse::Click::new(cursor_position, state.last_click);
+                let click = mouse::Click::new(cursor_position, state.last_click);
 
                 match click.kind() {
                     click::Kind::Single => {
@@ -493,10 +475,9 @@ where
                         .unwrap_or(0);
 
                         if state.keyboard_modifiers.shift() {
-                            state.cursor.select_range(
-                                state.cursor.start(value),
-                                position,
-                            );
+                            state
+                                .cursor
+                                .select_range(state.cursor.start(value), position);
                         } else {
                             state.cursor.move_to(position);
                         }
@@ -602,8 +583,7 @@ where
                 focus.updated_at = Instant::now();
 
                 match key_code {
-                    keyboard::KeyCode::Enter
-                    | keyboard::KeyCode::NumpadEnter => {
+                    keyboard::KeyCode::Enter | keyboard::KeyCode::NumpadEnter => {
                         if let Some(on_submit) = on_submit.clone() {
                             shell.publish(on_submit);
                         }
@@ -632,9 +612,7 @@ where
                         {
                             if is_secure {
                                 let cursor_pos = state.cursor.end(value);
-                                state
-                                    .cursor
-                                    .select_range(cursor_pos, value.len());
+                                state.cursor.select_range(cursor_pos, value.len());
                             } else {
                                 state.cursor.select_right_by_words(value);
                             }
@@ -647,9 +625,7 @@ where
                         shell.publish(message);
                     }
                     keyboard::KeyCode::Left => {
-                        if platform::is_jump_modifier_pressed(modifiers)
-                            && !is_secure
-                        {
+                        if platform::is_jump_modifier_pressed(modifiers) && !is_secure {
                             if modifiers.shift() {
                                 state.cursor.select_left_by_words(value);
                             } else {
@@ -662,9 +638,7 @@ where
                         }
                     }
                     keyboard::KeyCode::Right => {
-                        if platform::is_jump_modifier_pressed(modifiers)
-                            && !is_secure
-                        {
+                        if platform::is_jump_modifier_pressed(modifiers) && !is_secure {
                             if modifiers.shift() {
                                 state.cursor.select_right_by_words(value);
                             } else {
@@ -678,41 +652,28 @@ where
                     }
                     keyboard::KeyCode::Home => {
                         if modifiers.shift() {
-                            state
-                                .cursor
-                                .select_range(state.cursor.start(value), 0);
+                            state.cursor.select_range(state.cursor.start(value), 0);
                         } else {
                             state.cursor.move_to(0);
                         }
                     }
                     keyboard::KeyCode::End => {
                         if modifiers.shift() {
-                            state.cursor.select_range(
-                                state.cursor.start(value),
-                                value.len(),
-                            );
+                            state
+                                .cursor
+                                .select_range(state.cursor.start(value), value.len());
                         } else {
                             state.cursor.move_to(value.len());
                         }
                     }
-                    keyboard::KeyCode::C
-                        if state.keyboard_modifiers.command() =>
-                    {
-                        if let Some((start, end)) =
-                            state.cursor.selection(value)
-                        {
-                            clipboard
-                                .write(value.select(start, end).to_string());
+                    keyboard::KeyCode::C if state.keyboard_modifiers.command() => {
+                        if let Some((start, end)) = state.cursor.selection(value) {
+                            clipboard.write(value.select(start, end).to_string());
                         }
                     }
-                    keyboard::KeyCode::X
-                        if state.keyboard_modifiers.command() =>
-                    {
-                        if let Some((start, end)) =
-                            state.cursor.selection(value)
-                        {
-                            clipboard
-                                .write(value.select(start, end).to_string());
+                    keyboard::KeyCode::X if state.keyboard_modifiers.command() => {
+                        if let Some((start, end)) = state.cursor.selection(value) {
+                            clipboard.write(value.select(start, end).to_string());
                         }
 
                         let mut editor = Editor::new(value, &mut state.cursor);
@@ -737,8 +698,7 @@ where
                                 }
                             };
 
-                            let mut editor =
-                                Editor::new(value, &mut state.cursor);
+                            let mut editor = Editor::new(value, &mut state.cursor);
 
                             editor.paste(content.clone());
 
@@ -754,9 +714,7 @@ where
                             state.is_pasting = None;
                         }
                     }
-                    keyboard::KeyCode::A
-                        if state.keyboard_modifiers.command() =>
-                    {
+                    keyboard::KeyCode::A if state.keyboard_modifiers.command() => {
                         state.cursor.select_all(value);
                     }
                     keyboard::KeyCode::Escape => {
@@ -764,12 +722,9 @@ where
                         state.is_dragging = false;
                         state.is_pasting = None;
 
-                        state.keyboard_modifiers =
-                            keyboard::Modifiers::default();
+                        state.keyboard_modifiers = keyboard::Modifiers::default();
                     }
-                    keyboard::KeyCode::Tab
-                    | keyboard::KeyCode::Up
-                    | keyboard::KeyCode::Down => {
+                    keyboard::KeyCode::Tab | keyboard::KeyCode::Up | keyboard::KeyCode::Down => {
                         return event::Status::Ignored;
                     }
                     _ => {}
@@ -786,9 +741,7 @@ where
                     keyboard::KeyCode::V => {
                         state.is_pasting = None;
                     }
-                    keyboard::KeyCode::Tab
-                    | keyboard::KeyCode::Up
-                    | keyboard::KeyCode::Down => {
+                    keyboard::KeyCode::Tab | keyboard::KeyCode::Up | keyboard::KeyCode::Down => {
                         return event::Status::Ignored;
                     }
                     _ => {}
@@ -811,8 +764,7 @@ where
                 focus.now = now;
 
                 let millis_until_redraw = CURSOR_BLINK_INTERVAL_MILLIS
-                    - (now - focus.updated_at).as_millis()
-                        % CURSOR_BLINK_INTERVAL_MILLIS;
+                    - (now - focus.updated_at).as_millis() % CURSOR_BLINK_INTERVAL_MILLIS;
 
                 shell.request_redraw(window::RedrawRequest::At(
                     now + Duration::from_millis(millis_until_redraw as u64),
@@ -837,7 +789,7 @@ pub fn draw<Renderer>(
     state: &State,
     value: &Value,
     placeholder: &str,
-    size: Option<u16>,
+    size: Option<f32>,
     font: &Renderer::Font,
     is_secure: bool,
     style: &<Renderer::Theme as StyleSheet>::Style,
@@ -877,21 +829,18 @@ pub fn draw<Renderer>(
     let (cursor, offset) = if let Some(focus) = &state.is_focused {
         match state.cursor.state(value) {
             cursor::State::Index(position) => {
-                let (text_value_width, offset) =
-                    measure_cursor_and_scroll_offset(
-                        renderer,
-                        text_bounds,
-                        value,
-                        size,
-                        position,
-                        font.clone(),
-                    );
+                let (text_value_width, offset) = measure_cursor_and_scroll_offset(
+                    renderer,
+                    text_bounds,
+                    value,
+                    size,
+                    position,
+                    font.clone(),
+                );
 
-                let is_cursor_visible = ((focus.now - focus.updated_at)
-                    .as_millis()
-                    / CURSOR_BLINK_INTERVAL_MILLIS)
-                    % 2
-                    == 0;
+                let is_cursor_visible =
+                    ((focus.now - focus.updated_at).as_millis() / CURSOR_BLINK_INTERVAL_MILLIS) % 2
+                        == 0;
 
                 let cursor = if is_cursor_visible {
                     Some((
@@ -918,25 +867,23 @@ pub fn draw<Renderer>(
                 let left = start.min(end);
                 let right = end.max(start);
 
-                let (left_position, left_offset) =
-                    measure_cursor_and_scroll_offset(
-                        renderer,
-                        text_bounds,
-                        value,
-                        size,
-                        left,
-                        font.clone(),
-                    );
+                let (left_position, left_offset) = measure_cursor_and_scroll_offset(
+                    renderer,
+                    text_bounds,
+                    value,
+                    size,
+                    left,
+                    font.clone(),
+                );
 
-                let (right_position, right_offset) =
-                    measure_cursor_and_scroll_offset(
-                        renderer,
-                        text_bounds,
-                        value,
-                        size,
-                        right,
-                        font.clone(),
-                    );
+                let (right_position, right_offset) = measure_cursor_and_scroll_offset(
+                    renderer,
+                    text_bounds,
+                    value,
+                    size,
+                    right,
+                    font.clone(),
+                );
 
                 let width = right_position - left_position;
 
@@ -991,7 +938,7 @@ pub fn draw<Renderer>(
                 width: f32::INFINITY,
                 ..text_bounds
             },
-            size: f32::from(size),
+            size: size,
             horizontal_alignment: alignment::Horizontal::Left,
             vertical_alignment: alignment::Vertical::Center,
         });
@@ -1007,10 +954,7 @@ pub fn draw<Renderer>(
 }
 
 /// Computes the current [`mouse::Interaction`] of the [`AdvancedTextInput`].
-pub fn mouse_interaction(
-    layout: Layout<'_>,
-    cursor_position: Point,
-) -> mouse::Interaction {
+pub fn mouse_interaction(layout: Layout<'_>, cursor_position: Point) -> mouse::Interaction {
     if layout.bounds().contains(cursor_position) {
         mouse::Interaction::Text
     } else {
@@ -1150,7 +1094,7 @@ fn offset<Renderer>(
     renderer: &Renderer,
     text_bounds: Rectangle,
     font: Renderer::Font,
-    size: u16,
+    size: f32,
     value: &Value,
     state: &State,
 ) -> f32
@@ -1184,7 +1128,7 @@ fn measure_cursor_and_scroll_offset<Renderer>(
     renderer: &Renderer,
     text_bounds: Rectangle,
     value: &Value,
-    size: u16,
+    size: f32,
     cursor_index: usize,
     font: Renderer::Font,
 ) -> (f32, f32)
@@ -1193,8 +1137,7 @@ where
 {
     let text_before_cursor = value.until(cursor_index).to_string();
 
-    let text_value_width =
-        renderer.measure_width(&text_before_cursor, size, font);
+    let text_value_width = renderer.measure_width(&text_before_cursor, size, font);
 
     let offset = ((text_value_width + 5.0) - text_bounds.width).max(0.0);
 
@@ -1207,7 +1150,7 @@ fn find_cursor_position<Renderer>(
     renderer: &Renderer,
     text_bounds: Rectangle,
     font: Renderer::Font,
-    size: Option<u16>,
+    size: Option<f32>,
     value: &Value,
     state: &State,
     x: f32,
@@ -1217,13 +1160,12 @@ where
 {
     let size = size.unwrap_or_else(|| renderer.default_size());
 
-    let offset =
-        offset(renderer, text_bounds, font.clone(), size, value, state);
+    let offset = offset(renderer, text_bounds, font.clone(), size, value, state);
 
     renderer
         .hit_test(
             &value.to_string(),
-            size.into(),
+            size,
             font,
             Size::INFINITY,
             Point::new(x + offset, text_bounds.height / 2.0),
