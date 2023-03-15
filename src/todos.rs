@@ -37,6 +37,10 @@ static EMAIL_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_i
 static PASSWORD_INPUT_ID: Lazy<advanced_text_input::Id> =
     Lazy::new(advanced_text_input::Id::unique);
 
+// user id and api key
+static USERID_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
+static APIKEY_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
+
 // logged in boxes
 static INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
@@ -95,6 +99,7 @@ impl State {
             api_key,
             integration_api_key: String::new(),
             integration_user_id: String::new(),
+            error: None,
         })
     }
     fn not_logged_in() -> State {
@@ -126,6 +131,7 @@ pub struct ManageSettingsState {
     api_key: String,
     integration_user_id: String,
     integration_api_key: String,
+    error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -246,7 +252,12 @@ pub enum Message {
     // change dock
     ExpandDock,
     CollapseDock,
-
+    // Settings page
+    EditUserId(String),
+    SubmitUserId,
+    EditApiKey(String),
+    SubmitApiKey,
+    SubmitSettings,
     // not logged in page
     EditEmail(String),
     SubmitEmail,
@@ -680,6 +691,44 @@ impl ProgramWithSubscription for Todos {
                 }
                 _ => Command::none(),
             },
+            Message::EditUserId(val) => match self.state {
+                State::ManageSettings(ref mut state) => {
+                    state.integration_user_id = val;
+                    state.error = None;
+                    Command::none()
+                }
+                _ => Command::none(),
+            },
+            Message::SubmitUserId => match self.state {
+                State::ManageSettings(_) => Todos::next_widget(),
+                _ => Command::none(),
+            },
+            Message::EditApiKey(val) => match self.state {
+                State::ManageSettings(ref mut state) => {
+                    state.integration_api_key = val;
+                    state.error = None;
+                    Command::none()
+                }
+                _ => Command::none(),
+            },
+            Message::SubmitApiKey => match self.state {
+                State::ManageSettings(_) => Todos::next_widget(),
+                _ => Command::none(),
+            },
+            Message::SubmitSettings => match self.state {
+                State::ManageSettings(ref state) => {
+                    let server_api_url = self.server_api_url.clone();
+                    let email = state.email.clone();
+                    let password = state.password.clone();
+                    let duration = Duration::from_secs(24 * 60 * 60).as_millis() as i64;
+                    Command::single(Action::Future(Box::pin(async move {
+                        Message::LoginAttemptComplete(
+                            do_login(server_api_url, email, password, duration).await,
+                        )
+                    })))
+                }
+                _ => Command::none(),
+            },
             Message::LoginAttemptComplete(res) => match self.state {
                 State::NotLoggedIn(ref mut state) => {
                     match res {
@@ -951,7 +1000,7 @@ impl ProgramWithSubscription for Todos {
             .into(),
             Self {
                 state:
-                    State::ManageSettings(ManageSettingsState{
+                    State::ManageSettings(ManageSettingsState {
                         integration_api_key,
                         integration_user_id,
                         error,
@@ -960,51 +1009,40 @@ impl ProgramWithSubscription for Todos {
                 expanded: true,
                 ..
             } => {
-                let email_input =
-                    advanced_text_input::AdvancedTextInput::new("Email", email, Message::EditEmail)
-                        .id(EMAIL_INPUT_ID.clone())
-                        .on_submit(Message::SubmitEmail);
-
-                let mut password_input = advanced_text_input::AdvancedTextInput::new(
-                    "Password",
-                    password,
-                    Message::EditPassword,
+                let userid_input = advanced_text_input::AdvancedTextInput::new(
+                    "User ID",
+                    integration_user_id,
+                    Message::EditUserId,
                 )
-                .id(PASSWORD_INPUT_ID.clone())
-                .on_submit(Message::SubmitPassword);
+                .id(USERID_INPUT_ID.clone())
+                .on_submit(Message::SubmitUserId);
 
-                if !view_password {
-                    password_input = password_input.password();
-                }
+                let apikey_input = advanced_text_input::AdvancedTextInput::new(
+                    "API Key",
+                    integration_api_key,
+                    Message::EditApiKey,
+                )
+                .id(APIKEY_INPUT_ID.clone())
+                .on_submit(Message::SubmitApiKey);
 
                 let error = match error {
                     Some(error) => text(error).style(Color::from([1.0, 0.0, 0.0])),
                     None => text(""),
                 };
 
-                let submit_button = button("Submit").on_press(Message::AttemptLogin);
+                let submit_button = button("Submit").on_press(Message::SubmitSettings);
 
                 row(vec![
-                    column(vec![
-                        button("Collapse")
-                            .on_press(Message::CollapseDock)
-                            .width(Length::Shrink)
-                            .into(),
-                        button(if *view_password {
-                            "Hide Password"
-                        } else {
-                            "View Password"
-                        })
-                        .on_press(Message::TogglePasswordView)
+                    column(vec![button("Collapse")
+                        .on_press(Message::CollapseDock)
                         .width(Length::Shrink)
-                        .into(),
-                    ])
+                        .into()])
                     .spacing(10)
                     .width(Length::Shrink)
                     .into(),
                     column(vec![
-                        email_input.into(),
-                        password_input.into(),
+                        userid_input.into(),
+                        apikey_input.into(),
                         submit_button.into(),
                         error.into(),
                     ])
