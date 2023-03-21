@@ -20,7 +20,8 @@ use once_cell::sync::Lazy;
 
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use todoproxy_api::response::Info;
+use todoproxy_api::response::{Info, HabiticaIntegration};
+use todoproxy_api::request::HabiticaIntegrationNewProps;
 use todoproxy_api::{
     FinishedTask, LiveTask, StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind,
 };
@@ -258,6 +259,7 @@ pub enum Message {
     EditApiKey(String),
     SubmitApiKey,
     SubmitSettings,
+    SubmitSettingsComplete(Result<HabiticaIntegration, String>),
     // not logged in page
     EditEmail(String),
     SubmitEmail,
@@ -718,17 +720,31 @@ impl ProgramWithSubscription for Todos {
             Message::SubmitSettings => match self.state {
                 State::ManageSettings(ref state) => {
                     let server_api_url = self.server_api_url.clone();
-                    let email = state.email.clone();
-                    let password = state.password.clone();
-                    let duration = Duration::from_secs(24 * 60 * 60).as_millis() as i64;
+                    let api_key = state.api_key.clone();
+                    let integration_user_id = state.integration_user_id.clone();
+                    let integration_api_key = state.integration_api_key.clone();
                     Command::single(Action::Future(Box::pin(async move {
-                        Message::LoginAttemptComplete(
-                            do_login(server_api_url, email, password, duration).await,
+                        Message::SubmitSettingsComplete(
+                            do_submit_settings(server_api_url, integration_user_id , integration_api_key , api_key).await,
                         )
                     })))
                 }
                 _ => Command::none(),
             },
+            Message::SubmitSettingsComplete(res) => match self.state {
+                State::ManageSettings(ref mut state) => {
+                    match res {
+                        Ok(HabiticaIntegration { integration_api_key, integration_user_id}) => {
+                            Command::none()
+                        },
+                        Err(e) => {
+                            state.error = Some(e);
+                            Command::none()
+                        }
+                    }
+                }
+                _ => Command::none()
+            }
             Message::LoginAttemptComplete(res) => match self.state {
                 State::NotLoggedIn(ref mut state) => {
                     match res {
@@ -1325,6 +1341,36 @@ impl ProgramWithSubscription for Todos {
 
     fn handle_uncaptured_events(&self, events: Vec<iced_native::Event>) -> Vec<Self::Message> {
         events.into_iter().map(Message::EventOccurred).collect()
+    }
+}
+
+async fn do_submit_settings(
+    server_api_url: Url,
+    integration_user_id: String,
+    integration_api_key: String,
+    api_key: String,
+) -> Result<HabiticaIntegration, String> {
+    let client = reqwest::Client::new();
+
+    // get api key
+    let resp = client
+        .post(server_api_url.join("habitica_integration/new").map_err(report_url_error)?)
+        .json(&HabiticaIntegrationNewProps {
+            integration_user_id,
+            integration_api_key,
+            api_key,
+        })
+        .send()
+        .await
+        .map_err(report_reqwest_error)?;
+
+    match resp.status().as_u16() {
+        200..=299 => Ok(resp.json().await.map_err(report_reqwest_error)?),
+        status => Err(format!(
+            "{}: {}",
+            status,
+            resp.text().await.map_err(report_reqwest_error)?
+        )),
     }
 }
 
