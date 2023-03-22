@@ -20,8 +20,8 @@ use once_cell::sync::Lazy;
 
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use todoproxy_api::response::{Info, HabiticaIntegration};
 use todoproxy_api::request::HabiticaIntegrationNewProps;
+use todoproxy_api::response::{HabiticaIntegration, Info};
 use todoproxy_api::{
     FinishedTask, LiveTask, StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind,
 };
@@ -77,6 +77,7 @@ pub struct Todos {
     focused: bool,
     expanded: bool,
     state: State,
+    nocache: bool,
 }
 
 #[derive(Debug)]
@@ -92,9 +93,23 @@ impl State {
     fn from_cache(api_key: String) -> State {
         State::Restored(RestoredState { api_key })
     }
+
     fn not_connected(api_key: String, error: Option<String>) -> State {
-        State::NotConnected(NotConnectedState { api_key, error })
+        State::NotConnected(NotConnectedState {
+            api_key,
+            error,
+            needs_integration: false,
+        })
     }
+
+    fn not_connected_integration(api_key: String) -> State {
+        State::NotConnected(NotConnectedState {
+            api_key,
+            error: None,
+            needs_integration: true,
+        })
+    }
+
     fn manage_settings(api_key: String) -> State {
         State::ManageSettings(ManageSettingsState {
             api_key,
@@ -125,6 +140,7 @@ pub struct NotLoggedInState {
 pub struct NotConnectedState {
     api_key: String,
     error: Option<String>,
+    needs_integration: bool,
 }
 
 #[derive(Debug)]
@@ -258,6 +274,7 @@ pub enum Message {
     SubmitUserId,
     EditApiKey(String),
     SubmitApiKey,
+    CancelSettings,
     SubmitSettings,
     SubmitSettingsComplete(Result<HabiticaIntegration, String>),
     // not logged in page
@@ -276,6 +293,7 @@ pub enum Message {
     RetryConnect,
     LogOut,
     // connected page
+    ManageSettings,
     EditInput(String),
     SubmitInput,
     EditActive(String),
@@ -291,20 +309,21 @@ pub enum Message {
 }
 
 impl Todos {
-    pub fn new(wm_state: wm_hints::WmHintsState) -> Result<Todos, Box<dyn std::error::Error>> {
-        // try to read config
-        let config = xdg_manager::get_or_create_config::<TodosConfig>(CONFIG_FILENAME).unwrap();
+    pub fn new(
+        wm_state: wm_hints::WmHintsState,
+        nocache: bool,
+        remote_url: Option<String>,
+    ) -> Result<Todos, Box<dyn std::error::Error>> {
+        let server_api_url = match remote_url {
+            Some(url) => Url::parse(&url)?,
+            None => {
+                // try to read config
+                let config =
+                    xdg_manager::get_or_create_config::<TodosConfig>(CONFIG_FILENAME).unwrap();
 
-        let cache = xdg_manager::load_cache_if_exists::<TodosCache>(CACHE_FILENAME).unwrap();
-
-        let state = match cache {
-            Some(cache) if cache.server_api_url == config.server_api_url => {
-                State::from_cache(cache.api_key)
+                Url::parse(&config.server_api_url)?
             }
-            _ => State::not_logged_in(),
         };
-
-        let server_api_url = Url::parse(&config.server_api_url)?;
 
         // throw error if not https or http
         match server_api_url.scheme() {
@@ -312,7 +331,20 @@ impl Todos {
             _ => Err("invalid url")?,
         }
 
+        let state = if nocache {
+            State::not_logged_in()
+        } else {
+            let cache = xdg_manager::load_cache_if_exists::<TodosCache>(CACHE_FILENAME).unwrap();
+            match cache {
+                Some(cache) if cache.server_api_url == server_api_url.as_str() => {
+                    State::from_cache(cache.api_key)
+                }
+                _ => State::not_logged_in(),
+            }
+        };
+
         Ok(Todos {
+            nocache,
             server_api_url,
             wm_state,
             grabbed: false,
@@ -591,6 +623,18 @@ impl ProgramWithSubscription for Todos {
                 }
                 Command::none()
             }
+            Message::ManageSettings => {
+                match self.state {
+                    State::Connected(ref state) => {
+                        self.state = State::manage_settings(state.api_key.clone());
+                    }
+                    State::NotConnected(ref state) => {
+                        self.state = State::manage_settings(state.api_key.clone());
+                    }
+                    _ => {}
+                }
+                Command::none()
+            }
             Message::SetActive(a) => match self.state {
                 State::Connected(ref mut state) => {
                     let edit_command = match state.active_id_val {
@@ -628,8 +672,10 @@ impl ProgramWithSubscription for Todos {
                 _ => Command::none(),
             },
             Message::LogOut => match self.state {
-                State::Connected(_) | State::NotConnected(_) => {
-                    xdg_manager::delete_cache(CACHE_FILENAME).unwrap();
+                State::Connected(_) | State::NotConnected(_) | State::ManageSettings(_) => {
+                    if !self.nocache {
+                        xdg_manager::delete_cache(CACHE_FILENAME).unwrap();
+                    }
                     self.state = State::not_logged_in();
                     Command::none()
                 }
@@ -717,6 +763,20 @@ impl ProgramWithSubscription for Todos {
                 State::ManageSettings(_) => Todos::next_widget(),
                 _ => Command::none(),
             },
+            Message::CancelSettings => match self.state {
+                State::ManageSettings(ref state) => {
+                    // reconnect back immediately
+                    let api_key = state.api_key.clone();
+                    // attempt to autoconnect back to
+                    // we need to now try to initialize the websocket connection
+                    let connect_attempt_result = self.attempt_connect(&api_key);
+                    // switch state
+                    self.state = State::not_connected(api_key, None);
+                    // return the result
+                    connect_attempt_result
+                }
+                _ => Command::none(),
+            },
             Message::SubmitSettings => match self.state {
                 State::ManageSettings(ref state) => {
                     let server_api_url = self.server_api_url.clone();
@@ -725,7 +785,13 @@ impl ProgramWithSubscription for Todos {
                     let integration_api_key = state.integration_api_key.clone();
                     Command::single(Action::Future(Box::pin(async move {
                         Message::SubmitSettingsComplete(
-                            do_submit_settings(server_api_url, integration_user_id , integration_api_key , api_key).await,
+                            do_submit_settings(
+                                server_api_url,
+                                integration_user_id,
+                                integration_api_key,
+                                api_key,
+                            )
+                            .await,
                         )
                     })))
                 }
@@ -734,17 +800,25 @@ impl ProgramWithSubscription for Todos {
             Message::SubmitSettingsComplete(res) => match self.state {
                 State::ManageSettings(ref mut state) => {
                     match res {
-                        Ok(HabiticaIntegration { integration_api_key, integration_user_id}) => {
-                            Command::none()
-                        },
+                        Ok(HabiticaIntegration { .. }) => {
+                            // reconnect back immediately
+                            let api_key = state.api_key.clone();
+                            // attempt to autoconnect back to
+                            // we need to now try to initialize the websocket connection
+                            let connect_attempt_result = self.attempt_connect(&api_key);
+                            // switch state
+                            self.state = State::not_connected(api_key, None);
+                            // return the result
+                            connect_attempt_result
+                        }
                         Err(e) => {
                             state.error = Some(e);
                             Command::none()
                         }
                     }
                 }
-                _ => Command::none()
-            }
+                _ => Command::none(),
+            },
             Message::LoginAttemptComplete(res) => match self.state {
                 State::NotLoggedIn(ref mut state) => {
                     match res {
@@ -753,11 +827,13 @@ impl ProgramWithSubscription for Todos {
                             key: Some(api_key), ..
                         }) => {
                             // save in cache file
-                            let cache = TodosCache {
-                                server_api_url: self.server_api_url.clone().into(),
-                                api_key: api_key.clone(),
-                            };
-                            xdg_manager::write_cache("cache.json", &cache).unwrap();
+                            if !self.nocache {
+                                let cache = TodosCache {
+                                    server_api_url: self.server_api_url.clone().into(),
+                                    api_key: api_key.clone(),
+                                };
+                                xdg_manager::write_cache("cache.json", &cache).unwrap();
+                            }
 
                             // we need to now try to initialize the websocket connection
                             let connect_attempt_result = self.attempt_connect(&api_key);
@@ -870,7 +946,7 @@ impl ProgramWithSubscription for Todos {
                         Command::none()
                     }
                     Err(ConnectionCloseKind::IntegrationNotFound) => {
-                        self.state = State::manage_settings(state.api_key.clone());
+                        self.state = State::not_connected_integration(state.api_key.clone());
                         Command::none()
                     }
                     Err(ConnectionCloseKind::Other(e)) => {
@@ -1046,20 +1122,27 @@ impl ProgramWithSubscription for Todos {
                     None => text(""),
                 };
 
-                let submit_button = button("Submit").on_press(Message::SubmitSettings);
+                let submit_button = button("Submit")
+                    .on_press(Message::SubmitSettings)
+                    .style(theme::Button::Primary);
+                let cancel_button = button("Cancel")
+                    .on_press(Message::CancelSettings)
+                    .style(theme::Button::Secondary);
 
                 row(vec![
-                    column(vec![button("Collapse")
-                        .on_press(Message::CollapseDock)
-                        .width(Length::Shrink)
-                        .into()])
+                    column(vec![
+                        button("Collapse").on_press(Message::CollapseDock).into(),
+                        button("Log Out").on_press(Message::LogOut).into(),
+                    ])
                     .spacing(10)
                     .width(Length::Shrink)
                     .into(),
                     column(vec![
                         userid_input.into(),
                         apikey_input.into(),
-                        submit_button.into(),
+                        row(vec![submit_button.into(), cancel_button.into()])
+                            .spacing(10)
+                            .into(),
                         error.into(),
                     ])
                     .spacing(10)
@@ -1120,7 +1203,12 @@ impl ProgramWithSubscription for Todos {
                 }
             }
             Self {
-                state: State::NotConnected(NotConnectedState { error, .. }),
+                state:
+                    State::NotConnected(NotConnectedState {
+                        error,
+                        needs_integration,
+                        ..
+                    }),
                 expanded: true,
                 ..
             } => row(vec![
@@ -1131,6 +1219,14 @@ impl ProgramWithSubscription for Todos {
                 .spacing(10)
                 .into(),
                 column(match error {
+                    _ if *needs_integration => vec![
+                        text("You need to add your Habitica API Keys")
+                            .horizontal_alignment(alignment::Horizontal::Center)
+                            .into(),
+                        button("Manage Settings")
+                            .on_press(Message::ManageSettings)
+                            .into(),
+                    ],
                     Some(error) => vec![
                         text(error)
                             .style(Color::from([1.0, 0.0, 0.0]))
@@ -1324,6 +1420,9 @@ impl ProgramWithSubscription for Todos {
                         .on_press(Message::ToggleFinished)
                         .into(),
                         button("Log Out").on_press(Message::LogOut).into(),
+                        button("Manage Settings")
+                            .on_press(Message::ManageSettings)
+                            .into(),
                     ])
                     .spacing(10)
                     .into(),
@@ -1354,7 +1453,11 @@ async fn do_submit_settings(
 
     // get api key
     let resp = client
-        .post(server_api_url.join("habitica_integration/new").map_err(report_url_error)?)
+        .post(
+            server_api_url
+                .join("habitica_integration/new")
+                .map_err(report_url_error)?,
+        )
         .json(&HabiticaIntegrationNewProps {
             integration_user_id,
             integration_api_key,

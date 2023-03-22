@@ -5,6 +5,7 @@ mod utils;
 mod wm_hints;
 mod xdg_manager;
 
+use clap::Parser;
 use todos::Todos;
 
 use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
@@ -22,8 +23,20 @@ use winit::{
 
 pub static APP_NAME: &'static str = "statusbar";
 
+#[derive(Parser, Debug, Clone)]
+#[clap(about, version, author)]
+struct Opts {
+    #[clap(long)]
+    nocache: bool,
+    #[clap(long)]
+    remote_url: Option<String>,
+}
+
 pub fn main() {
     env_logger::init();
+
+    // parse arguments
+    let Opts { nocache, remote_url, } = Opts::parse();
 
     // Initialize winit
     let event_loop =
@@ -40,7 +53,7 @@ pub fn main() {
 
     let wm_state_mgr = wm_hints::create_state_mgr(&window).unwrap();
     // initialize app state
-    let todos = Todos::new(wm_state_mgr).unwrap();
+    let todos = Todos::new(wm_state_mgr, nocache, remote_url).unwrap();
 
     let mut viewport = Viewport::with_physical_size(
         Size::new(physical_size.width, physical_size.height),
