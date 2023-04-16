@@ -36,7 +36,10 @@ pub fn main() {
     env_logger::init();
 
     // parse arguments
-    let Opts { nocache, remote_url, } = Opts::parse();
+    let Opts {
+        nocache,
+        remote_url,
+    } = Opts::parse();
 
     // Initialize winit
     let event_loop =
@@ -73,8 +76,11 @@ pub fn main() {
     // Initialize wgpu
     let backend = wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::PRIMARY);
 
-    let instance = wgpu::Instance::new(backend);
-    let surface = unsafe { instance.create_surface(&window) };
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: backend,
+        ..Default::default()
+    });
+    let surface = unsafe { instance.create_surface(&window) }.unwrap();
 
     let (format, (device, queue)) = futures::executor::block_on(async {
         let adapter =
@@ -86,11 +92,16 @@ pub fn main() {
 
         let needed_limits = wgpu::Limits::default();
 
+        let capabilities = surface.get_capabilities(&adapter);
+
         (
-            surface
-                .get_supported_formats(&adapter)
-                .first()
+            capabilities
+                .formats
+                .iter()
+                .filter(|format| format.describe().srgb)
                 .copied()
+                .next()
+                .or_else(|| capabilities.formats.first().copied())
                 .expect("Get preferred format"),
             adapter
                 .request_device(
@@ -115,6 +126,7 @@ pub fn main() {
             height: physical_size.height,
             present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![],
         },
     );
 
@@ -221,6 +233,7 @@ pub fn main() {
                             height: size.height,
                             present_mode: wgpu::PresentMode::AutoVsync,
                             alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                            view_formats: vec![],
                         },
                     );
 

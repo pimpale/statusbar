@@ -360,6 +360,7 @@ fn run_command<P, E>(
                         .send_event(tag(window.id().into()))
                         .expect("Send message to event loop");
                 }
+                window::Action::ChangeIcon(icon) => window.set_window_icon(conversion::icon(icon)),
             },
             command::Action::Widget(action) => {
                 let mut current_cache = std::mem::take(cache);
