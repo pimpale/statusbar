@@ -92,15 +92,6 @@ impl State {
         State::NotConnected(NotConnectedState {
             api_key,
             error,
-            needs_integration: false,
-        })
-    }
-
-    fn not_connected_integration(api_key: String) -> State {
-        State::NotConnected(NotConnectedState {
-            api_key,
-            error: None,
-            needs_integration: true,
         })
     }
 
@@ -126,7 +117,6 @@ pub struct NotLoggedInState {
 pub struct NotConnectedState {
     api_key: String,
     error: Option<String>,
-    needs_integration: bool,
 }
 
 #[derive(Debug)]
@@ -166,7 +156,6 @@ enum ConnectedStateRecvKind {
 }
 
 enum ConnectionCloseKind {
-    IntegrationNotFound,
     Unauthorized,
     Other(String),
 }
@@ -221,7 +210,6 @@ impl ConnectedState {
                 tungstenite::Message::Pong(data) => Ok(ConnectedStateRecvKind::Pong(data)),
                 tungstenite::Message::Close(f) => Err(match f {
                     Some(f) => match f.reason.to_string().as_str() {
-                        "IntegrationNotFound" => ConnectionCloseKind::IntegrationNotFound,
                         "Unauthorized" => ConnectionCloseKind::Unauthorized,
                         _ => ConnectionCloseKind::Other(f.reason.to_string()),
                     },
@@ -822,10 +810,6 @@ impl ProgramWithSubscription for Todos {
                         self.state = State::not_logged_in();
                         Command::none()
                     }
-                    Err(ConnectionCloseKind::IntegrationNotFound) => {
-                        self.state = State::not_connected_integration(state.api_key.clone());
-                        Command::none()
-                    }
                     Err(ConnectionCloseKind::Other(e)) => {
                         self.state = State::not_connected(state.api_key.clone(), Some(e));
                         Command::none()
@@ -1003,7 +987,6 @@ impl ProgramWithSubscription for Todos {
                 state:
                     State::NotConnected(NotConnectedState {
                         error,
-                        needs_integration,
                         ..
                     }),
                 expanded: true,
