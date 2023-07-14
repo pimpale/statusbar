@@ -1965,13 +1965,13 @@ dependencies = [
 
 [[package]]
 name = "num-derive"
-version = "0.3.3"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "876a53fff98e03a936a674b29568b0e605f06b29372c2489ff4de23f1949743d"
+checksum = "9e6a0fd4f737c707bd9086cc16c925f294943eb62eb71499e9fd4cf71f8b9f4e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.25",
 ]
 
 [[package]]
@@ -3068,7 +3068,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "todoproxy-api"
 version = "0.0.1"
-source = "git+https://github.com/pimpale/todoproxy-api#88af5f8711b019e35e7b9d7bbf996513dd6c2a82"
+source = "git+https://github.com/pimpale/todoproxy-api?branch=standalone#2e248c6e8d376fb34f4a7d9192c15fb10b044bdb"
 dependencies = [
  "derive_more",
  "num-derive",

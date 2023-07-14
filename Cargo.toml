@@ -20,7 +20,7 @@ iced_style = "0.8.0"
 unicode-segmentation = "1.10.1"
 derivative = "2.2.0"
 tokio-tungstenite = { version="0.19.0",features = ["native-tls"] }
-todoproxy-api = { version = "*", git = "https://github.com/pimpale/todoproxy-api" }
+todoproxy-api = { version = "*", git = "https://github.com/pimpale/todoproxy-api", branch="standalone" }
 auth-service-api = { version = "*", git = "https://github.com/innexgo/auth-service-api" }
 futures-util = "0.3.28"
 rand = "0.8.5"

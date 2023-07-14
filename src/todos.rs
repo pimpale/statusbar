@@ -20,8 +20,7 @@ use once_cell::sync::Lazy;
 
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use todoproxy_api::request::HabiticaIntegrationNewProps;
-use todoproxy_api::response::{HabiticaIntegration, Info};
+use todoproxy_api::response::Info;
 use todoproxy_api::{
     FinishedTask, LiveTask, StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind,
 };
@@ -37,10 +36,6 @@ use crate::{advanced_text_input, xdg_manager};
 static EMAIL_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 static PASSWORD_INPUT_ID: Lazy<advanced_text_input::Id> =
     Lazy::new(advanced_text_input::Id::unique);
-
-// user id and api key
-static USERID_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
-static APIKEY_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
 
 // logged in boxes
 static INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_input::Id::unique);
@@ -85,7 +80,6 @@ pub enum State {
     NotLoggedIn(NotLoggedInState),
     Restored(RestoredState),
     NotConnected(NotConnectedState),
-    ManageSettings(ManageSettingsState),
     Connected(ConnectedState),
 }
 
@@ -110,14 +104,6 @@ impl State {
         })
     }
 
-    fn manage_settings(api_key: String) -> State {
-        State::ManageSettings(ManageSettingsState {
-            api_key,
-            integration_api_key: String::new(),
-            integration_user_id: String::new(),
-            error: None,
-        })
-    }
     fn not_logged_in() -> State {
         State::NotLoggedIn(NotLoggedInState {
             email: String::new(),
@@ -141,14 +127,6 @@ pub struct NotConnectedState {
     api_key: String,
     error: Option<String>,
     needs_integration: bool,
-}
-
-#[derive(Debug)]
-pub struct ManageSettingsState {
-    api_key: String,
-    integration_user_id: String,
-    integration_api_key: String,
-    error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -269,14 +247,6 @@ pub enum Message {
     // change dock
     ExpandDock,
     CollapseDock,
-    // Settings page
-    EditUserId(String),
-    SubmitUserId,
-    EditApiKey(String),
-    SubmitApiKey,
-    CancelSettings,
-    SubmitSettings,
-    SubmitSettingsComplete(Result<HabiticaIntegration, String>),
     // not logged in page
     EditEmail(String),
     SubmitEmail,
@@ -293,7 +263,6 @@ pub enum Message {
     RetryConnect,
     LogOut,
     // connected page
-    ManageSettings,
     EditInput(String),
     SubmitInput,
     EditActive(String),
@@ -623,18 +592,6 @@ impl ProgramWithSubscription for Todos {
                 }
                 Command::none()
             }
-            Message::ManageSettings => {
-                match self.state {
-                    State::Connected(ref state) => {
-                        self.state = State::manage_settings(state.api_key.clone());
-                    }
-                    State::NotConnected(ref state) => {
-                        self.state = State::manage_settings(state.api_key.clone());
-                    }
-                    _ => {}
-                }
-                Command::none()
-            }
             Message::SetActive(a) => match self.state {
                 State::Connected(ref mut state) => {
                     let edit_command = match state.active_id_val {
@@ -672,7 +629,7 @@ impl ProgramWithSubscription for Todos {
                 _ => Command::none(),
             },
             Message::LogOut => match self.state {
-                State::Connected(_) | State::NotConnected(_) | State::ManageSettings(_) => {
+                State::Connected(_) | State::NotConnected(_) => {
                     if !self.nocache {
                         xdg_manager::delete_cache(CACHE_FILENAME).unwrap();
                     }
@@ -736,86 +693,6 @@ impl ProgramWithSubscription for Todos {
                             do_login(server_api_url, email, password, duration).await,
                         )
                     })))
-                }
-                _ => Command::none(),
-            },
-            Message::EditUserId(val) => match self.state {
-                State::ManageSettings(ref mut state) => {
-                    state.integration_user_id = val;
-                    state.error = None;
-                    Command::none()
-                }
-                _ => Command::none(),
-            },
-            Message::SubmitUserId => match self.state {
-                State::ManageSettings(_) => Todos::next_widget(),
-                _ => Command::none(),
-            },
-            Message::EditApiKey(val) => match self.state {
-                State::ManageSettings(ref mut state) => {
-                    state.integration_api_key = val;
-                    state.error = None;
-                    Command::none()
-                }
-                _ => Command::none(),
-            },
-            Message::SubmitApiKey => match self.state {
-                State::ManageSettings(_) => Todos::next_widget(),
-                _ => Command::none(),
-            },
-            Message::CancelSettings => match self.state {
-                State::ManageSettings(ref state) => {
-                    // reconnect back immediately
-                    let api_key = state.api_key.clone();
-                    // attempt to autoconnect back to
-                    // we need to now try to initialize the websocket connection
-                    let connect_attempt_result = self.attempt_connect(&api_key);
-                    // switch state
-                    self.state = State::not_connected(api_key, None);
-                    // return the result
-                    connect_attempt_result
-                }
-                _ => Command::none(),
-            },
-            Message::SubmitSettings => match self.state {
-                State::ManageSettings(ref state) => {
-                    let server_api_url = self.server_api_url.clone();
-                    let api_key = state.api_key.clone();
-                    let integration_user_id = state.integration_user_id.clone();
-                    let integration_api_key = state.integration_api_key.clone();
-                    Command::single(Action::Future(Box::pin(async move {
-                        Message::SubmitSettingsComplete(
-                            do_submit_settings(
-                                server_api_url,
-                                integration_user_id,
-                                integration_api_key,
-                                api_key,
-                            )
-                            .await,
-                        )
-                    })))
-                }
-                _ => Command::none(),
-            },
-            Message::SubmitSettingsComplete(res) => match self.state {
-                State::ManageSettings(ref mut state) => {
-                    match res {
-                        Ok(HabiticaIntegration { .. }) => {
-                            // reconnect back immediately
-                            let api_key = state.api_key.clone();
-                            // attempt to autoconnect back to
-                            // we need to now try to initialize the websocket connection
-                            let connect_attempt_result = self.attempt_connect(&api_key);
-                            // switch state
-                            self.state = State::not_connected(api_key, None);
-                            // return the result
-                            connect_attempt_result
-                        }
-                        Err(e) => {
-                            state.error = Some(e);
-                            Command::none()
-                        }
-                    }
                 }
                 _ => Command::none(),
             },
@@ -1075,86 +952,6 @@ impl ProgramWithSubscription for Todos {
                 .into()
             }
             Self {
-                state: State::ManageSettings(_),
-                expanded: false,
-                ..
-            } => button(
-                text("Click to Manage Settings")
-                    .horizontal_alignment(alignment::Horizontal::Center)
-                    .vertical_alignment(alignment::Vertical::Center)
-                    .height(Length::Fill)
-                    .width(Length::Fill),
-            )
-            .style(theme::Button::Text)
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .on_press(Message::ExpandDock)
-            .into(),
-            Self {
-                state:
-                    State::ManageSettings(ManageSettingsState {
-                        integration_api_key,
-                        integration_user_id,
-                        error,
-                        ..
-                    }),
-                expanded: true,
-                ..
-            } => {
-                let userid_input = advanced_text_input::AdvancedTextInput::new(
-                    "User ID",
-                    integration_user_id,
-                    Message::EditUserId,
-                )
-                .id(USERID_INPUT_ID.clone())
-                .on_submit(Message::SubmitUserId);
-
-                let apikey_input = advanced_text_input::AdvancedTextInput::new(
-                    "API Key",
-                    integration_api_key,
-                    Message::EditApiKey,
-                )
-                .id(APIKEY_INPUT_ID.clone())
-                .on_submit(Message::SubmitApiKey);
-
-                let error = match error {
-                    Some(error) => text(error).style(Color::from([1.0, 0.0, 0.0])),
-                    None => text(""),
-                };
-
-                let submit_button = button("Submit")
-                    .on_press(Message::SubmitSettings)
-                    .style(theme::Button::Primary);
-                let cancel_button = button("Cancel")
-                    .on_press(Message::CancelSettings)
-                    .style(theme::Button::Secondary);
-
-                row(vec![
-                    column(vec![
-                        button("Collapse").on_press(Message::CollapseDock).into(),
-                        button("Log Out").on_press(Message::LogOut).into(),
-                    ])
-                    .spacing(10)
-                    .width(Length::Shrink)
-                    .into(),
-                    column(vec![
-                        userid_input.into(),
-                        apikey_input.into(),
-                        row(vec![submit_button.into(), cancel_button.into()])
-                            .spacing(10)
-                            .into(),
-                        error.into(),
-                    ])
-                    .spacing(10)
-                    .width(Length::Shrink)
-                    .into(),
-                ])
-                .spacing(10)
-                .padding(10)
-                .into()
-            }
-
-            Self {
                 state: State::Restored(_),
                 ..
             } => button(
@@ -1219,14 +1016,6 @@ impl ProgramWithSubscription for Todos {
                 .spacing(10)
                 .into(),
                 column(match error {
-                    _ if *needs_integration => vec![
-                        text("You need to add your Habitica API Keys")
-                            .horizontal_alignment(alignment::Horizontal::Center)
-                            .into(),
-                        button("Manage Settings")
-                            .on_press(Message::ManageSettings)
-                            .into(),
-                    ],
                     Some(error) => vec![
                         text(error)
                             .style(Color::from([1.0, 0.0, 0.0]))
@@ -1420,9 +1209,6 @@ impl ProgramWithSubscription for Todos {
                         .on_press(Message::ToggleFinished)
                         .into(),
                         button("Log Out").on_press(Message::LogOut).into(),
-                        button("Manage Settings")
-                            .on_press(Message::ManageSettings)
-                            .into(),
                     ])
                     .spacing(10)
                     .into(),
@@ -1440,40 +1226,6 @@ impl ProgramWithSubscription for Todos {
 
     fn handle_uncaptured_events(&self, events: Vec<iced_native::Event>) -> Vec<Self::Message> {
         events.into_iter().map(Message::EventOccurred).collect()
-    }
-}
-
-async fn do_submit_settings(
-    server_api_url: Url,
-    integration_user_id: String,
-    integration_api_key: String,
-    api_key: String,
-) -> Result<HabiticaIntegration, String> {
-    let client = reqwest::Client::new();
-
-    // get api key
-    let resp = client
-        .post(
-            server_api_url
-                .join("habitica_integration/new")
-                .map_err(report_url_error)?,
-        )
-        .json(&HabiticaIntegrationNewProps {
-            integration_user_id,
-            integration_api_key,
-            api_key,
-        })
-        .send()
-        .await
-        .map_err(report_reqwest_error)?;
-
-    match resp.status().as_u16() {
-        200..=299 => Ok(resp.json().await.map_err(report_reqwest_error)?),
-        status => Err(format!(
-            "{}: {}",
-            status,
-            resp.text().await.map_err(report_reqwest_error)?
-        )),
     }
 }
 
