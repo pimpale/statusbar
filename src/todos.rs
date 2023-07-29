@@ -167,6 +167,7 @@ pub enum Op {
     Pop(String, TaskStatus),
     Edit(String, String),
     Move(String, String),
+    Rev(String, String),
 }
 
 impl ConnectedState {
@@ -185,6 +186,7 @@ impl ConnectedState {
                 Op::Pop(id, status) => WebsocketOpKind::FinishLiveTask { id, status },
                 Op::Edit(id, value) => WebsocketOpKind::EditLiveTask { id, value },
                 Op::Move(id_del, id_ins) => WebsocketOpKind::MvLiveTask { id_del, id_ins },
+                Op::Rev(id1, id2) => WebsocketOpKind::RevLiveTask { id1, id2 },
             },
         };
 
@@ -554,10 +556,23 @@ impl ProgramWithSubscription for Todos {
                                     }
                                     _ => Command::none(),
                                 }
-                            } else if val == "mv" {
-                                match (l.get(1), l.front()) {
+                            } else {
+                                Command::none()
+                            }
+                        }
+                        "rev" => {
+                            let l = &state.snapshot.live;
+                            if let Ok((i, j)) = sscanf::scanf!(val, "rev {} {}", usize, usize) {
+                                match (l.get(i), l.get(j)) {
+                                    (Some(f), Some(b)) if i != j => {
+                                        state.wsop(Op::Rev(f.id.clone(), b.id.clone()))
+                                    }
+                                    _ => Command::none(),
+                                }
+                            } else if let Ok(i) = sscanf::scanf!(val, "rev {}", usize) {
+                                match (l.get(i), l.front()) {
                                     (Some(f), Some(b)) if l.len() > 1 => {
-                                        state.wsop(Op::Move(f.id.clone(), b.id.clone()))
+                                        state.wsop(Op::Rev(f.id.clone(), b.id.clone()))
                                     }
                                     _ => Command::none(),
                                 }
@@ -1311,6 +1326,24 @@ fn apply_operation(
             if let (Some(ins_pos), Some(del_pos)) = (ins_pos, del_pos) {
                 let removed = live.remove(del_pos).unwrap();
                 live.insert(ins_pos, removed);
+            }
+        }
+        WebsocketOpKind::RevLiveTask { id1, id2 } => {
+            let pos1 = live.iter().position(|x| x.id == id1);
+            let pos2 = live.iter().position(|x| x.id == id2);
+
+            // order
+            let (start_pos, end_pos) = if pos1 <= pos2 {
+                (pos1, pos2)
+            } else {
+                (pos2, pos1)
+            };
+
+            // reverse between specified indexes
+            if let (Some(start_pos), Some(end_pos)) = (start_pos, end_pos) {
+                live.make_contiguous();
+                let (s, _) = live.as_mut_slices();
+                s[start_pos..=end_pos].reverse();
             }
         }
         WebsocketOpKind::FinishLiveTask { id, status } => {
