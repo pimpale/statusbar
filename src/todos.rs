@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use auth_service_api::request::ApiKeyNewWithEmailProps;
 use auth_service_api::response::ApiKey;
@@ -41,6 +41,8 @@ static ACTIVE_INPUT_ID: Lazy<advanced_text_input::Id> = Lazy::new(advanced_text_
 
 static CONFIG_FILENAME: &'static str = "config.json";
 static CACHE_FILENAME: &'static str = "cache.json";
+
+static TIMEOUT_DURATION: f64 = 30.0;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TodosConfig {
@@ -140,6 +142,8 @@ pub struct ConnectedState {
     active_id_val: Option<(String, String)>,
     snapshot: StateSnapshot,
     show_finished: bool,
+    session_id: String,
+    heartbeat_id: String,
 }
 
 enum ConnectedStateRecvKind {
@@ -255,7 +259,7 @@ pub enum Message {
     WebsocketSendComplete(Result<(), String>),
     WebsocketRecvComplete(Option<Result<tungstenite::protocol::Message, String>>),
     // Check timeout
-    CheckWebsocketTimeout,
+    CheckWebsocketTimeout(String, String),
 }
 
 impl Todos {
@@ -746,6 +750,8 @@ impl Program for Todos {
             Message::ConnectAttemptComplete(result) => match self.state {
                 State::NotConnected(ref mut state) => match result {
                     Ok((sink, stream)) => {
+                        let session_id = utils::random_string();
+                        let heartbeat_id = utils::random_string();
                         let api_key = state.api_key.clone();
                         self.state = State::Connected(ConnectedState {
                             api_key: api_key.clone(),
@@ -758,6 +764,8 @@ impl Program for Todos {
                                 finished: VecDeque::new(),
                             },
                             show_finished: false,
+                            session_id: session_id.clone(),
+                            heartbeat_id: heartbeat_id.clone(),
                         });
 
                         Command::batch([
@@ -765,6 +773,11 @@ impl Program for Todos {
                             Todos::recv(stream),
                             // focus the input bar
                             advanced_text_input::focus(INPUT_ID.clone()),
+                            // start checking for heartbeats
+                            Todos::delay_message(
+                                Duration::from_secs_f64(TIMEOUT_DURATION),
+                                Message::CheckWebsocketTimeout(session_id, heartbeat_id),
+                            ),
                         ])
                     }
                     Err(e) => {
@@ -793,10 +806,11 @@ impl Program for Todos {
                         Todos::recv(state.websocket_recv.clone()),
                         match v {
                             ConnectedStateRecvKind::Nop => Command::none(),
-                            ConnectedStateRecvKind::Ping(data) => Todos::send(
-                                state.websocket_send.clone(),
-                                tungstenite::protocol::Message::Pong(data),
-                            ),
+                            ConnectedStateRecvKind::Ping(_) => {
+                                // reset the heartbeat id
+                                state.heartbeat_id = utils::random_string();
+                                Command::none()
+                            }
                             ConnectedStateRecvKind::Op(WebsocketOp { kind, .. }) => {
                                 apply_operation(
                                     &mut state.snapshot,
@@ -818,7 +832,30 @@ impl Program for Todos {
                 },
                 _ => Command::none(),
             },
-            Message::CheckWebsocketTimeout => todo!(),
+            Message::CheckWebsocketTimeout(session_id, old_heartbeat_id) => match self.state {
+                State::Connected(ref mut state) => {
+                    if state.session_id == session_id {
+                        if state.heartbeat_id == old_heartbeat_id {
+                            self.state = State::not_connected(
+                                state.api_key.clone(),
+                                Some(String::from("websocket timed out")),
+                            );
+                            Command::none()
+                        } else {
+                            Todos::delay_message(
+                                Duration::from_secs_f64(TIMEOUT_DURATION),
+                                Message::CheckWebsocketTimeout(
+                                    session_id,
+                                    state.heartbeat_id.clone(),
+                                ),
+                            )
+                        }
+                    } else {
+                        Command::none()
+                    }
+                }
+                _ => Command::none(),
+            },
         }
     }
 
@@ -995,7 +1032,7 @@ impl Program for Todos {
                     .into(),
                 Some(LiveTask { value, id }) => container(
                     row(vec![
-                        button("Task Succeeded")
+                        button("Succeeded")
                             .height(Length::Fill)
                             .style(theme::Button::Positive)
                             .on_press(Message::Op(Op::Pop(id.clone(), TaskStatus::Succeeded)))
@@ -1006,12 +1043,12 @@ impl Program for Todos {
                             .style(theme::Button::Text)
                             .on_press(Message::ExpandDock)
                             .into(),
-                        button("Task Failed")
+                        button("Failed")
                             .height(Length::Fill)
                             .style(theme::Button::Destructive)
                             .on_press(Message::Op(Op::Pop(id.clone(), TaskStatus::Failed)))
                             .into(),
-                        button("Task Obsoleted")
+                        button("Obsoleted")
                             .height(Length::Fill)
                             .style(theme::Button::Secondary)
                             .on_press(Message::Op(Op::Pop(id.clone(), TaskStatus::Obsoleted)))
