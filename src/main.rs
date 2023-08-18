@@ -1,9 +1,9 @@
+mod advanced_text_input;
 mod run_command;
 mod todos;
 mod utils;
 mod wm_hints;
 mod xdg_manager;
-mod advanced_text_input;
 
 use todos::Todos;
 
@@ -159,7 +159,12 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                     WindowEvent::ModifiersChanged(new_modifiers) => {
                         modifiers = new_modifiers;
                     }
-                    WindowEvent::Resized(_) => {
+                    WindowEvent::Resized(size) => {
+                        viewport = Viewport::with_physical_size(
+                            Size::new(size.width, size.height),
+                            window.scale_factor(),
+                        );
+
                         resized = true;
                     }
                     WindowEvent::CloseRequested => {
@@ -177,7 +182,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Event::MainEventsCleared => {
                 // If there are events pending
-                if !state.is_queue_empty() {
+                while !state.is_queue_empty() {
                     // We update iced
                     let (unhandled_events, command) = state.update(
                         viewport.logical_size(),
