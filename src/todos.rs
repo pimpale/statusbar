@@ -6,13 +6,12 @@ use auth_service_api::request::ApiKeyNewWithEmailProps;
 use auth_service_api::response::ApiKey;
 use derivative::Derivative;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use iced_native::command::Action;
-use iced_native::keyboard::KeyCode;
-use iced_native::{widget, Color};
-use iced_winit::alignment;
-use iced_winit::widget::{button, column, container, row, scrollable, text};
-use iced_winit::Element;
-use iced_winit::{theme, Command, Length};
+use iced_core::keyboard::KeyCode;
+use iced_core::{alignment, widget, Color, Element, Length, Size};
+use iced_style::{theme, Theme};
+use iced_widget::runtime::command::Action;
+use iced_widget::runtime::{window, Command, Program};
+use iced_widget::{button, column, container, row, scrollable, text};
 
 use iced_wgpu::Renderer;
 
@@ -27,7 +26,6 @@ use todoproxy_api::{
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite;
 
-use crate::program_runner::ProgramWithSubscription;
 use crate::utils;
 use crate::wm_hints;
 use crate::{advanced_text_input, xdg_manager};
@@ -224,7 +222,7 @@ impl ConnectedState {
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub enum Message {
-    EventOccurred(iced_native::Event),
+    EventOccurred(iced_core::Event),
     // Focus
     FocusDock,
     UnfocusDock,
@@ -306,8 +304,12 @@ impl Todos {
         })
     }
 
+    pub fn handle_uncaptured_event(&self, event: iced_core::Event) -> Message {
+        Message::EventOccurred(event)
+    }
+
     fn next_widget() -> Command<Message> {
-        Command::single(Action::Widget(widget::Action::new(
+        Command::single(Action::Widget(Box::new(
             widget::operation::focusable::focus_next(),
         )))
     }
@@ -375,25 +377,25 @@ impl Todos {
     }
 }
 
-impl ProgramWithSubscription for Todos {
+impl Program for Todos {
     type Message = Message;
-    type Renderer = Renderer;
+    type Renderer = Renderer<Theme>;
 
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
             Message::EventOccurred(event) => match event {
                 // grab keyboard focus on cursor enter
-                iced_native::Event::Mouse(iced_native::mouse::Event::CursorEntered) => {
+                iced_core::Event::Mouse(iced_core::mouse::Event::CursorEntered) => {
                     Command::single(Action::Future(Box::pin(async { Message::FocusDock })))
                 }
                 // release keyboard focus on cursor exit
-                iced_native::Event::Mouse(iced_native::mouse::Event::CursorLeft) => {
+                iced_core::Event::Mouse(iced_core::mouse::Event::CursorLeft) => {
                     Command::single(Action::Future(Box::pin(async { Message::UnfocusDock })))
                 }
-                iced_native::Event::Mouse(iced_native::mouse::Event::CursorMoved { .. }) => {
+                iced_core::Event::Mouse(iced_core::mouse::Event::CursorMoved { .. }) => {
                     Command::single(Action::Future(Box::pin(async { Message::FocusDock })))
                 }
-                iced_native::Event::Keyboard(iced_native::keyboard::Event::KeyPressed {
+                iced_core::Event::Keyboard(iced_core::keyboard::Event::KeyPressed {
                     key_code: KeyCode::Tab,
                     ..
                 }) => Todos::next_widget(),
@@ -439,7 +441,7 @@ impl ProgramWithSubscription for Todos {
                     _ => Command::none(),
                 };
 
-                Command::batch([iced_winit::window::resize(1, 250), command])
+                Command::batch([window::resize(Size::new(1, 250)), command])
             }
             Message::CollapseDock => {
                 self.expanded = false;
@@ -457,7 +459,7 @@ impl ProgramWithSubscription for Todos {
                     _ => {}
                 }
 
-                iced_winit::window::resize(1, 50)
+                window::resize(Size::new(1, 50))
             }
             Message::EditInput(value) => {
                 match self.state {
@@ -816,23 +818,11 @@ impl ProgramWithSubscription for Todos {
                 },
                 _ => Command::none(),
             },
-            Message::PingTimedOut(data) => match self.state {
-                State::Connected(ref mut state) => {
-                    if state.pending_pings.contains(&data) {
-                        // we didn't receive pong in time
-                        self.state = State::not_connected(
-                            state.api_key.clone(),
-                            Some(String::from("websocket timed out")),
-                        );
-                    }
-                    Command::none()
-                }
-                _ => Command::none(),
-            },
+            Message::CheckWebsocketTimeout => todo!(),
         }
     }
 
-    fn view(&self) -> Element<Message, Renderer> {
+    fn view(&self) -> Element<Message, Renderer<Theme>> {
         match self {
             Self {
                 state: State::NotLoggedIn(_),
@@ -861,18 +851,16 @@ impl ProgramWithSubscription for Todos {
                 expanded: true,
                 ..
             } => {
-                let email_input =
-                    advanced_text_input::AdvancedTextInput::new("Email", email, Message::EditEmail)
-                        .id(EMAIL_INPUT_ID.clone())
-                        .on_submit(Message::SubmitEmail);
+                let email_input = advanced_text_input::AdvancedTextInput::new("Email", email)
+                    .id(EMAIL_INPUT_ID.clone())
+                    .on_input(Message::EditEmail)
+                    .on_submit(Message::SubmitEmail);
 
-                let mut password_input = advanced_text_input::AdvancedTextInput::new(
-                    "Password",
-                    password,
-                    Message::EditPassword,
-                )
-                .id(PASSWORD_INPUT_ID.clone())
-                .on_submit(Message::SubmitPassword);
+                let mut password_input =
+                    advanced_text_input::AdvancedTextInput::new("Password", password)
+                        .id(PASSWORD_INPUT_ID.clone())
+                        .on_input(Message::EditPassword)
+                        .on_submit(Message::SubmitPassword);
 
                 if !view_password {
                     password_input = password_input.password();
@@ -1054,13 +1042,13 @@ impl ProgramWithSubscription for Todos {
                 let input = advanced_text_input::AdvancedTextInput::new(
                     "What needs to be done?",
                     input_value,
-                    Message::EditInput,
                 )
                 .id(INPUT_ID.clone())
                 .on_focus(Message::SetActive(None))
+                .on_input(Message::EditInput)
                 .on_submit(Message::SubmitInput);
 
-                let tasks: Element<_, Renderer> = if !*show_finished {
+                let tasks: Element<_, _> = if !*show_finished {
                     if live.len() > 0 {
                         column(
                             live.iter()
@@ -1082,9 +1070,9 @@ impl ProgramWithSubscription for Todos {
                                                 advanced_text_input::AdvancedTextInput::new(
                                                     "Edit Task",
                                                     val,
-                                                    Message::EditActive,
                                                 )
                                                 .id(ACTIVE_INPUT_ID.clone())
+                                                .on_input(Message::EditActive)
                                                 .on_submit(Message::SetActive(None))
                                                 .into(),
                                                 button("Task Failed")
@@ -1183,10 +1171,6 @@ impl ProgramWithSubscription for Todos {
                 .into()
             }
         }
-    }
-
-    fn handle_uncaptured_events(&self, events: Vec<iced_native::Event>) -> Vec<Self::Message> {
-        events.into_iter().map(Message::EventOccurred).collect()
     }
 }
 

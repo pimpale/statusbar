@@ -49,7 +49,7 @@ impl std::error::Error for WmHintsError {
 }
 
 pub fn create_state_mgr(
-    window: &dyn winit::platform::unix::WindowExtUnix,
+    window: &dyn winit::platform::x11::WindowExtX11,
 ) -> Result<WmHintsState, WmHintsError> {
     Ok(WmHintsState {
         screen_id: window

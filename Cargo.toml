@@ -5,21 +5,20 @@ edition = "2021"
 
 [dependencies]
 env_logger = "0.10.0"
-iced_wgpu = {version="0.10.0",features = ["default_system_font"]}
-iced_winit = "0.9.1"
-log = "0.4.19"
+iced_wgpu = "0.11.1"
+iced_winit = "0.10.0"
+log = "0.4.20"
 once_cell = "1.18.0"
-serde_json = "1.0.104"
-serde = { version = "1.0.178", features = ["derive"] }
+serde_json = "1.0.105"
+serde = { version = "1.0.183", features = ["derive"] }
 xcb = "1.2.2"
-tokio = { version = "1.29.1", features = ["full"] }
-iced_futures = { version = "0.6.0", features = ["tokio"] }
-iced_native = "0.10.3"
+tokio = { version = "1.32.0", features = ["full"] }
+iced_futures = { version = "0.7.0", features = ["tokio"] }
 sscanf = "0.4.1"
-iced_style = "0.8.0"
+iced_style = "0.9.0"
 unicode-segmentation = "1.10.1"
 derivative = "2.2.0"
-tokio-tungstenite = { version="0.19.0",features = ["native-tls"] }
+tokio-tungstenite = { version="0.20.0",features = ["native-tls"] }
 todoproxy-api = { version = "*", git = "https://github.com/pimpale/todoproxy-api", branch="standalone" }
 auth-service-api = { version = "*", git = "https://github.com/innexgo/auth-service-api" }
 futures-util = "0.3.28"
@@ -27,4 +26,6 @@ rand = "0.8.5"
 xdg = "2.5.2"
 reqwest = { version = "0.11.18", features = ["json"] }
 url = "2.4.0"
-clap = { version = "4.3.19", features = ["derive"] }
+clap = { version = "4.3.22", features = ["derive"] }
+iced_widget = "0.1.3"
+iced_core = "0.10.0"

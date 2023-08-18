@@ -1,24 +1,30 @@
-mod advanced_text_input;
-mod program_runner;
+mod run_command;
 mod todos;
 mod utils;
 mod wm_hints;
 mod xdg_manager;
+mod advanced_text_input;
 
-use clap::Parser;
 use todos::Todos;
 
-use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
-use iced_winit::{
-    conversion, futures, renderer, winit, Clipboard, Color, Debug, Proxy, Runtime, Size,
-};
+use clap::Parser;
+
+use iced_wgpu::graphics::Viewport;
+use iced_wgpu::{wgpu, Backend, Renderer, Settings};
+use iced_widget::runtime::program;
+use iced_winit::core::mouse;
+use iced_winit::core::renderer;
+use iced_winit::core::{Color, Size};
+use iced_winit::runtime::Debug;
+use iced_winit::style::Theme;
+use iced_winit::winit::dpi::LogicalSize;
+use iced_winit::{conversion, futures, winit, Clipboard, Proxy};
 
 use winit::{
-    dpi::LogicalSize,
-    dpi::PhysicalPosition,
     event::{Event, ModifiersState, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
-    platform::unix::{WindowBuilderExtUnix, XWindowType},
+    platform::x11::WindowBuilderExtX11,
+    platform::x11::XWindowType,
 };
 
 pub static APP_NAME: &'static str = "statusbar";
@@ -32,7 +38,7 @@ struct Opts {
     remote_url: Option<String>,
 }
 
-pub fn main() {
+pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     // parse arguments
@@ -42,55 +48,48 @@ pub fn main() {
     } = Opts::parse();
 
     // Initialize winit
-    let event_loop =
-        EventLoopBuilder::<<Todos as program_runner::ProgramWithSubscription>::Message>::with_user_event().build();
+    let event_loop = EventLoopBuilder::with_user_event().build();
 
     let window = winit::window::WindowBuilder::new()
         .with_x11_window_type(vec![XWindowType::Dock])
-        // todo: don't hardcode this, use an initial command or something
         .with_inner_size(LogicalSize::new(1, 50))
-        .build(&event_loop)
-        .unwrap();
+        .build(&event_loop)?;
 
     let physical_size = window.inner_size();
-
-    let wm_state_mgr = wm_hints::create_state_mgr(&window).unwrap();
-    // initialize app state
-    let todos = Todos::new(wm_state_mgr, nocache, remote_url).unwrap();
-
     let mut viewport = Viewport::with_physical_size(
         Size::new(physical_size.width, physical_size.height),
         window.scale_factor(),
     );
-
-    let mut cursor_position = PhysicalPosition::new(-1.0, -1.0);
+    let mut cursor_position = None;
     let mut modifiers = ModifiersState::default();
     let mut clipboard = Clipboard::connect(&window);
-    let mut proxy = event_loop.create_proxy();
+
+    // create runtime
     let mut runtime = {
-        let proxy = Proxy::new(proxy.clone());
+        let proxy = Proxy::new(event_loop.create_proxy());
         let executor = tokio::runtime::Runtime::new().unwrap();
-        Runtime::new(executor, proxy)
+        iced_futures::Runtime::new(executor, proxy)
     };
 
     // Initialize wgpu
-    let backend = wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::PRIMARY);
+    let default_backend = wgpu::Backends::PRIMARY;
+
+    let backend = wgpu::util::backend_bits_from_env().unwrap_or(default_backend);
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: backend,
         ..Default::default()
     });
-    let surface = unsafe { instance.create_surface(&window) }.unwrap();
 
-    let (format, (device, queue)) = futures::executor::block_on(async {
+    let surface = unsafe { instance.create_surface(&window) }?;
+
+    let (format, (device, queue)) = futures::futures::executor::block_on(async {
         let adapter =
             wgpu::util::initialize_adapter_from_env_or_default(&instance, backend, Some(&surface))
                 .await
-                .expect("No suitable GPU adapters found on the system!");
+                .expect("Create adapter");
 
         let adapter_features = adapter.features();
-
-        let needed_limits = wgpu::Limits::default();
 
         let capabilities = surface.get_capabilities(&adapter);
 
@@ -98,9 +97,8 @@ pub fn main() {
             capabilities
                 .formats
                 .iter()
-                .filter(|format| format.describe().srgb)
                 .copied()
-                .next()
+                .find(wgpu::TextureFormat::is_srgb)
                 .or_else(|| capabilities.formats.first().copied())
                 .expect("Get preferred format"),
             adapter
@@ -108,7 +106,7 @@ pub fn main() {
                     &wgpu::DeviceDescriptor {
                         label: None,
                         features: adapter_features & wgpu::Features::default(),
-                        limits: needed_limits,
+                        limits: wgpu::Limits::default(),
                     },
                     None,
                 )
@@ -130,17 +128,18 @@ pub fn main() {
         },
     );
 
-    let mut need_to_resize_surface = false;
+    let mut resized = false;
 
-    // Initialize staging belt
-    let mut staging_belt = wgpu::util::StagingBelt::new(5 * 1024);
+    // Initialize scene and GUI controls
+    let wm_state_mgr = wm_hints::create_state_mgr(&window).unwrap();
+    // initialize app state
+    let todos = Todos::new(wm_state_mgr, nocache, remote_url).unwrap();
 
     // Initialize iced
     let mut debug = Debug::new();
-    let mut renderer = Renderer::new(Backend::new(&device, Settings::default(), format));
+    let mut renderer = Renderer::new(Backend::new(&device, &queue, Settings::default(), format));
 
-    let mut state =
-        program_runner::State::new(todos, viewport.logical_size(), &mut renderer, &mut debug);
+    let mut state = program::State::new(todos, viewport.logical_size(), &mut renderer, &mut debug);
 
     // Run event loop
     event_loop.run(move |event, _, control_flow| {
@@ -149,24 +148,19 @@ pub fn main() {
 
         match event {
             Event::UserEvent(message) => {
+                // handle events that come in from completed futures
                 state.queue_message(message);
             }
             Event::WindowEvent { event, .. } => {
                 match event {
                     WindowEvent::CursorMoved { position, .. } => {
-                        cursor_position = position;
+                        cursor_position = Some(position);
                     }
                     WindowEvent::ModifiersChanged(new_modifiers) => {
                         modifiers = new_modifiers;
                     }
-                    WindowEvent::Resized(size) => {
-                        // change viewport
-                        viewport = Viewport::with_physical_size(
-                            Size::new(size.width, size.height),
-                            window.scale_factor(),
-                        );
-                        // in the next frame we'll have to resize the surface
-                        need_to_resize_surface = true;
+                    WindowEvent::Resized(_) => {
+                        resized = true;
                     }
                     WindowEvent::CloseRequested => {
                         *control_flow = ControlFlow::Exit;
@@ -185,11 +179,14 @@ pub fn main() {
                 // If there are events pending
                 if !state.is_queue_empty() {
                     // We update iced
-                    let maybe_command = state.update(
+                    let (unhandled_events, command) = state.update(
                         viewport.logical_size(),
-                        conversion::cursor_position(cursor_position, viewport.scale_factor()),
+                        cursor_position
+                            .map(|p| conversion::cursor_position(p, viewport.scale_factor()))
+                            .map(mouse::Cursor::Available)
+                            .unwrap_or(mouse::Cursor::Unavailable),
                         &mut renderer,
-                        &iced_wgpu::Theme::Dark,
+                        &Theme::Dark,
                         &renderer::Style {
                             text_color: Color::WHITE,
                         },
@@ -197,20 +194,19 @@ pub fn main() {
                         &mut debug,
                     );
 
-                    // run the command that was gotten from iced
-                    if let Some(command) = maybe_command {
-                        state.run_command(
-                            command,
+                    // handle uncaptured events
+                    for e in unhandled_events {
+                        state.queue_message(state.program().handle_uncaptured_event(e))
+                    }
+
+                    if let Some(command) = command {
+                        run_command::run_command(
+                            &mut state,
                             viewport.logical_size(),
-                            conversion::cursor_position(cursor_position, viewport.scale_factor()),
                             &mut renderer,
-                            &iced_wgpu::Theme::Dark,
-                            &renderer::Style {
-                                text_color: Color::WHITE,
-                            },
+                            command,
                             &mut runtime,
                             &mut clipboard,
-                            &mut proxy,
                             &mut debug,
                             &window,
                         );
@@ -221,8 +217,13 @@ pub fn main() {
                 }
             }
             Event::RedrawRequested(_) => {
-                if need_to_resize_surface {
+                if resized {
                     let size = window.inner_size();
+
+                    viewport = Viewport::with_physical_size(
+                        Size::new(size.width, size.height),
+                        window.scale_factor(),
+                    );
 
                     surface.configure(
                         &device,
@@ -237,7 +238,7 @@ pub fn main() {
                         },
                     );
 
-                    need_to_resize_surface = false;
+                    resized = false;
                 }
 
                 match surface.get_current_texture() {
@@ -255,8 +256,9 @@ pub fn main() {
                         renderer.with_primitives(|backend, primitive| {
                             backend.present(
                                 &device,
-                                &mut staging_belt,
+                                &queue,
                                 &mut encoder,
+                                None,
                                 &view,
                                 primitive,
                                 &viewport,
@@ -265,7 +267,6 @@ pub fn main() {
                         });
 
                         // Then we submit the work
-                        staging_belt.finish();
                         queue.submit(Some(encoder.finish()));
                         frame.present();
 
@@ -273,13 +274,13 @@ pub fn main() {
                         window.set_cursor_icon(iced_winit::conversion::mouse_interaction(
                             state.mouse_interaction(),
                         ));
-
-                        // And recall staging buffers
-                        staging_belt.recall();
                     }
                     Err(error) => match error {
                         wgpu::SurfaceError::OutOfMemory => {
-                            panic!("Swapchain error: {}. Rendering cannot continue.", error)
+                            panic!(
+                                "Swapchain error: {error}. \
+                                Rendering cannot continue."
+                            )
                         }
                         _ => {
                             // Try rendering again next frame.
