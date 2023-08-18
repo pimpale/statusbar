@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -89,10 +89,7 @@ impl State {
     }
 
     fn not_connected(api_key: String, error: Option<String>) -> State {
-        State::NotConnected(NotConnectedState {
-            api_key,
-            error,
-        })
+        State::NotConnected(NotConnectedState { api_key, error })
     }
 
     fn not_logged_in() -> State {
@@ -144,7 +141,6 @@ pub struct ConnectedState {
     input_value: String,
     active_id_val: Option<(String, String)>,
     snapshot: StateSnapshot,
-    pending_pings: HashSet<Vec<u8>>,
     show_finished: bool,
 }
 
@@ -152,7 +148,6 @@ enum ConnectedStateRecvKind {
     Nop,
     Op(WebsocketOp),
     Ping(Vec<u8>),
-    Pong(Vec<u8>),
 }
 
 enum ConnectionCloseKind {
@@ -209,7 +204,6 @@ impl ConnectedState {
                     .map_err(report_serde_error)
                     .map_err(ConnectionCloseKind::Other),
                 tungstenite::Message::Ping(data) => Ok(ConnectedStateRecvKind::Ping(data)),
-                tungstenite::Message::Pong(data) => Ok(ConnectedStateRecvKind::Pong(data)),
                 tungstenite::Message::Close(f) => Err(match f {
                     Some(f) => match f.reason.to_string().as_str() {
                         "Unauthorized" => ConnectionCloseKind::Unauthorized,
@@ -262,9 +256,8 @@ pub enum Message {
     // Websocket Interactions
     WebsocketSendComplete(Result<(), String>),
     WebsocketRecvComplete(Option<Result<tungstenite::protocol::Message, String>>),
-    // Websocket Ping
-    ShouldPing,
-    PingTimedOut(Vec<u8>),
+    // Check timeout
+    CheckWebsocketTimeout,
 }
 
 impl Todos {
@@ -758,7 +751,6 @@ impl ProgramWithSubscription for Todos {
                             websocket_send: sink.clone(),
                             input_value: String::new(),
                             active_id_val: None,
-                            pending_pings: HashSet::new(),
                             snapshot: StateSnapshot {
                                 live: VecDeque::new(),
                                 finished: VecDeque::new(),
@@ -769,8 +761,6 @@ impl ProgramWithSubscription for Todos {
                         Command::batch([
                             // start recieving responses
                             Todos::recv(stream),
-                            // start pinging
-                            Todos::delay_message(Duration::from_secs(5), Message::ShouldPing),
                             // focus the input bar
                             advanced_text_input::focus(INPUT_ID.clone()),
                         ])
@@ -805,12 +795,6 @@ impl ProgramWithSubscription for Todos {
                                 state.websocket_send.clone(),
                                 tungstenite::protocol::Message::Pong(data),
                             ),
-                            ConnectedStateRecvKind::Pong(data) => {
-                                // remove the corresponding ping from the hashset
-                                state.pending_pings.remove(&data);
-                                // Wait 5 seconds before sending another ping
-                                Todos::delay_message(Duration::from_secs(5), Message::ShouldPing)
-                            }
                             ConnectedStateRecvKind::Op(WebsocketOp { kind, .. }) => {
                                 apply_operation(
                                     &mut state.snapshot,
@@ -830,23 +814,6 @@ impl ProgramWithSubscription for Todos {
                         Command::none()
                     }
                 },
-                _ => Command::none(),
-            },
-            Message::ShouldPing => match self.state {
-                State::Connected(ref mut state) => {
-                    let random_string = utils::random_string().into_bytes();
-                    state.pending_pings.insert(random_string.clone());
-                    Command::batch([
-                        Todos::send(
-                            state.websocket_send.clone(),
-                            tungstenite::protocol::Message::Ping(random_string.clone()),
-                        ),
-                        Todos::delay_message(
-                            Duration::from_secs(5),
-                            Message::PingTimedOut(random_string),
-                        ),
-                    ])
-                }
                 _ => Command::none(),
             },
             Message::PingTimedOut(data) => match self.state {
@@ -999,11 +966,7 @@ impl ProgramWithSubscription for Todos {
                 }
             }
             Self {
-                state:
-                    State::NotConnected(NotConnectedState {
-                        error,
-                        ..
-                    }),
+                state: State::NotConnected(NotConnectedState { error, .. }),
                 expanded: true,
                 ..
             } => row(vec![
