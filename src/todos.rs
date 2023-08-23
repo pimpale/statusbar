@@ -689,7 +689,7 @@ impl Program for Todos {
                     let server_api_url = self.server_api_url.clone();
                     let email = state.email.clone();
                     let password = state.password.clone();
-                    let duration = Duration::from_secs(24 * 60 * 60).as_millis() as i64;
+                    let duration = Duration::from_secs(7 * 24 * 60 * 60).as_millis() as i64;
                     Command::single(Action::Future(Box::pin(async move {
                         Message::LoginAttemptComplete(
                             do_login(server_api_url, email, password, duration).await,
