@@ -9,8 +9,8 @@ iced_wgpu = "0.11.1"
 iced_winit = "0.10.0"
 log = "0.4.20"
 once_cell = "1.18.0"
-serde_json = "1.0.105"
-serde = { version = "1.0.183", features = ["derive"] }
+serde_json = "1.0.107"
+serde = { version = "1.0.188", features = ["derive"] }
 xcb = "1.2.2"
 tokio = { version = "1.32.0", features = ["full"] }
 iced_futures = { version = "0.7.0", features = ["tokio"] }
@@ -24,8 +24,8 @@ auth-service-api = { version = "*", git = "https://github.com/innexgo/auth-servi
 futures-util = "0.3.28"
 rand = "0.8.5"
 xdg = "2.5.2"
-reqwest = { version = "0.11.18", features = ["json"] }
-url = "2.4.0"
-clap = { version = "4.3.22", features = ["derive"] }
+reqwest = { version = "0.11.20", features = ["json"] }
+url = "2.4.1"
+clap = { version = "4.4.3", features = ["derive"] }
 iced_widget = "0.1.3"
 iced_core = "0.10.0"
