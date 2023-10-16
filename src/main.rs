@@ -5,7 +5,8 @@ mod utils;
 mod wm_hints;
 mod xdg_manager;
 
-use todos::Todos;
+use std::thread;
+use std::time::Duration;
 
 use clap::Parser;
 
@@ -20,12 +21,17 @@ use iced_winit::style::Theme;
 use iced_winit::winit::dpi::LogicalSize;
 use iced_winit::{conversion, futures, winit, Clipboard, Proxy};
 
+use signal_hook::consts::SIGUSR1;
+use signal_hook::iterator::Signals;
+
 use winit::{
     event::{Event, ModifiersState, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
     platform::x11::WindowBuilderExtX11,
     platform::x11::XWindowType,
 };
+
+use todos::Todos;
 
 pub static APP_NAME: &'static str = "statusbar";
 
@@ -140,6 +146,24 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut renderer = Renderer::new(Backend::new(&device, &queue, Settings::default(), format));
 
     let mut state = program::State::new(todos, viewport.logical_size(), &mut renderer, &mut debug);
+
+    // start catching the SIGUSR1 (open and focus) signal
+    let signal_proxy = event_loop.create_proxy();
+    let mut signals = Signals::new(&[SIGUSR1])?;
+
+    thread::spawn(move || {
+        for sig in signals.forever() {
+            match sig {
+                SIGUSR1 => {
+                    let _ = signal_proxy.send_event(todos::Message::ExpandDock);
+                    // debounce the enter key (which is annoying sometimes)
+                    thread::sleep(Duration::from_millis(100));
+                    let _ = signal_proxy.send_event(todos::Message::FocusDock);
+                }
+                _ => (),
+            }
+        }
+    });
 
     // Run event loop
     event_loop.run(move |event, _, control_flow| {
