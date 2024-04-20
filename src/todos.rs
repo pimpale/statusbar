@@ -1,13 +1,12 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use auth_service_api::request::ApiKeyNewWithEmailProps;
 use auth_service_api::response::ApiKey;
 use derivative::Derivative;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use iced_core::keyboard::KeyCode;
-use iced_core::{alignment, widget, Color, Element, Length, Size};
+use iced_core::{alignment, widget, Color, Element, Length, Size, SmolStr};
 use iced_style::{theme, Theme};
 use iced_widget::runtime::command::Action;
 use iced_widget::runtime::{window, Command, Program};
@@ -66,6 +65,7 @@ pub struct TodosCache {
 
 #[derive(Debug)]
 pub struct Todos {
+    window_id: iced_core::window::Id,
     server_api_url: Url,
     wm_state: wm_hints::WmHintsState,
     grabbed: bool,
@@ -264,6 +264,7 @@ pub enum Message {
 
 impl Todos {
     pub fn new(
+        window_id: iced_core::window::Id,
         wm_state: wm_hints::WmHintsState,
         nocache: bool,
         remote_url: Option<String>,
@@ -298,6 +299,7 @@ impl Todos {
         };
 
         Ok(Todos {
+            window_id,
             nocache,
             server_api_url,
             wm_state,
@@ -382,8 +384,9 @@ impl Todos {
 }
 
 impl Program for Todos {
+    type Theme = Theme;
     type Message = Message;
-    type Renderer = Renderer<Theme>;
+    type Renderer = Renderer;
 
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
@@ -400,9 +403,9 @@ impl Program for Todos {
                     Command::single(Action::Future(Box::pin(async { Message::FocusDock })))
                 }
                 iced_core::Event::Keyboard(iced_core::keyboard::Event::KeyPressed {
-                    key_code: KeyCode::Tab,
+                    text: Some(s),
                     ..
-                }) => Todos::next_widget(),
+                }) if s.as_str() == "\t" => Todos::next_widget(),
                 _ => Command::none(),
             },
             Message::FocusDock => {
@@ -445,7 +448,10 @@ impl Program for Todos {
                     _ => Command::none(),
                 };
 
-                Command::batch([window::resize(Size::new(1, 250)), command])
+                Command::batch([
+                    window::resize(self.window_id, Size::new(1.0, 250.0)),
+                    command,
+                ])
             }
             Message::CollapseDock => {
                 self.expanded = false;
@@ -463,7 +469,7 @@ impl Program for Todos {
                     _ => {}
                 }
 
-                window::resize(Size::new(1, 50))
+                window::resize(self.window_id, Size::new(1.0, 50.0))
             }
             Message::EditInput(value) => {
                 match self.state {
@@ -859,7 +865,7 @@ impl Program for Todos {
         }
     }
 
-    fn view(&self) -> Element<Message, Renderer<Theme>> {
+    fn view(&self) -> Element<Message, Theme, Renderer> {
         match self {
             Self {
                 state: State::NotLoggedIn(_),
@@ -1085,7 +1091,7 @@ impl Program for Todos {
                 .on_input(Message::EditInput)
                 .on_submit(Message::SubmitInput);
 
-                let tasks: Element<_, _> = if !*show_finished {
+                let tasks: Element<_, _, _> = if !*show_finished {
                     if live.len() > 0 {
                         column(
                             live.iter()
