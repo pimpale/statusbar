@@ -12,6 +12,7 @@ use clap::Parser;
 
 use iced_core::{window, Pixels};
 use iced_wgpu::graphics::Viewport;
+use iced_wgpu::wgpu::rwh::HasWindowHandle;
 use iced_wgpu::{wgpu, Backend, Renderer, Settings};
 use iced_widget::runtime::program;
 use iced_winit::core::mouse;
@@ -90,7 +91,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     });
 
-    let surface = instance.create_surface(&window)?;
+    let surface = instance.create_surface(window.window_handle()?)?;
 
     let (format, (device, queue)) = futures::futures::executor::block_on(async {
         let adapter = wgpu::util::initialize_adapter_from_env_or_default(&instance, Some(&surface))
