@@ -906,7 +906,7 @@ impl Program for Todos {
                         .on_submit(Message::SubmitPassword);
 
                 if !view_password {
-                    password_input = password_input.password();
+                    // password_input = password_input.password();
                 }
 
                 let error = match error {
@@ -916,8 +916,8 @@ impl Program for Todos {
 
                 let submit_button = button("Submit").on_press(Message::AttemptLogin);
 
-                row(vec![
-                    column(vec![
+                row([
+                    column([
                         button("Collapse")
                             .on_press(Message::CollapseDock)
                             .width(Length::Shrink)
@@ -934,7 +934,7 @@ impl Program for Todos {
                     .spacing(10)
                     .width(Length::Shrink)
                     .into(),
-                    column(vec![
+                    column([
                         email_input.into(),
                         password_input.into(),
                         submit_button.into(),
@@ -985,7 +985,7 @@ impl Program for Todos {
                 .into();
 
                 if error.is_some() {
-                    row(vec![
+                    row([
                         open_button,
                         button("Retry").on_press(Message::RetryConnect).into(),
                     ])
@@ -1000,8 +1000,8 @@ impl Program for Todos {
                 state: State::NotConnected(NotConnectedState { error, .. }),
                 expanded: true,
                 ..
-            } => row(vec![
-                column(vec![
+            } => row([
+                column([
                     button("Collapse").on_press(Message::CollapseDock).into(),
                     button("Log Out").on_press(Message::LogOut).into(),
                 ])
@@ -1037,7 +1037,7 @@ impl Program for Todos {
                     .padding(10)
                     .into(),
                 Some(LiveTask { value, id }) => container(
-                    row(vec![
+                    row([
                         button("Succeeded")
                             .height(Length::Fill)
                             .style(theme::Button::Positive)
@@ -1093,63 +1093,53 @@ impl Program for Todos {
 
                 let tasks: Element<_, _, _> = if !*show_finished {
                     if live.len() > 0 {
-                        column(
-                            live.iter()
-                                .enumerate()
-                                .map(|(i, task)| {
-                                    let header = text(format!("{}|", i)).size(25);
+                        column(live.iter().enumerate().map(|(i, task)| {
+                            let header = text(format!("{}|", i)).size(25);
 
-                                    match active_id_val {
-                                        Some((active_id, val)) if active_id == &task.id => {
-                                            row(vec![
-                                                header.into(),
-                                                button("Task Succeeded")
-                                                    .style(theme::Button::Positive)
-                                                    .on_press(Message::Op(Op::Pop(
-                                                        task.id.clone(),
-                                                        TaskStatus::Succeeded,
-                                                    )))
-                                                    .into(),
-                                                advanced_text_input::AdvancedTextInput::new(
-                                                    "Edit Task",
-                                                    val,
-                                                )
-                                                .id(ACTIVE_INPUT_ID.clone())
-                                                .on_input(Message::EditActive)
-                                                .on_submit(Message::SetActive(None))
-                                                .into(),
-                                                button("Task Failed")
-                                                    .style(theme::Button::Destructive)
-                                                    .on_press(Message::Op(Op::Pop(
-                                                        task.id.clone(),
-                                                        TaskStatus::Failed,
-                                                    )))
-                                                    .into(),
-                                                button("Task Obsoleted")
-                                                    .style(theme::Button::Secondary)
-                                                    .on_press(Message::Op(Op::Pop(
-                                                        task.id.clone(),
-                                                        TaskStatus::Obsoleted,
-                                                    )))
-                                                    .into(),
-                                            ])
-                                            .spacing(10)
-                                            .into()
-                                        }
-                                        _ => row(vec![
-                                            header.into(),
-                                            button(text(&task.value))
-                                                .on_press(Message::SetActive(Some(task.id.clone())))
-                                                .style(theme::Button::Text)
-                                                .width(Length::Fill)
-                                                .into(),
-                                        ])
-                                        .spacing(10)
+                            match active_id_val {
+                                Some((active_id, val)) if active_id == &task.id => row([
+                                    header.into(),
+                                    button("Task Succeeded")
+                                        .style(theme::Button::Positive)
+                                        .on_press(Message::Op(Op::Pop(
+                                            task.id.clone(),
+                                            TaskStatus::Succeeded,
+                                        )))
                                         .into(),
-                                    }
-                                })
-                                .collect(),
-                        )
+                                    advanced_text_input::AdvancedTextInput::new("Edit Task", val)
+                                        .id(ACTIVE_INPUT_ID.clone())
+                                        .on_input(Message::EditActive)
+                                        .on_submit(Message::SetActive(None))
+                                        .into(),
+                                    button("Task Failed")
+                                        .style(theme::Button::Destructive)
+                                        .on_press(Message::Op(Op::Pop(
+                                            task.id.clone(),
+                                            TaskStatus::Failed,
+                                        )))
+                                        .into(),
+                                    button("Task Obsoleted")
+                                        .style(theme::Button::Secondary)
+                                        .on_press(Message::Op(Op::Pop(
+                                            task.id.clone(),
+                                            TaskStatus::Obsoleted,
+                                        )))
+                                        .into(),
+                                ])
+                                .spacing(10)
+                                .into(),
+                                _ => row([
+                                    header.into(),
+                                    button(text(&task.value))
+                                        .on_press(Message::SetActive(Some(task.id.clone())))
+                                        .style(theme::Button::Text)
+                                        .width(Length::Fill)
+                                        .into(),
+                                ])
+                                .spacing(10)
+                                .into(),
+                            }
+                        }))
                         // pad right to avoid clipping scrollable
                         .padding([0, 15, 0, 0])
                         .into()
@@ -1157,42 +1147,36 @@ impl Program for Todos {
                         text("You have not created a task yet...").size(25).into()
                     }
                 } else {
-                    column(
-                        finished
-                            .iter()
-                            .enumerate()
-                            .map(|(i, task)| {
-                                row(vec![
-                                    text(format!("{}|", i)).size(25).into(),
-                                    match task.status {
-                                        TaskStatus::Succeeded => {
-                                            text("SUCCEEDED").style(Color::from_rgb(0.0, 1.0, 0.0))
-                                        }
-                                        TaskStatus::Failed => {
-                                            text("FAILED").style(Color::from_rgb(1.0, 0.0, 0.0))
-                                        }
-                                        TaskStatus::Obsoleted => {
-                                            text("OBSOLETED").style(Color::from_rgb(0.7, 0.7, 0.7))
-                                        }
-                                    }
-                                    .width(80.0)
-                                    .size(20)
-                                    .into(),
-                                    text(&task.value).into(),
-                                ])
-                                .spacing(10)
-                                .width(Length::Fill)
-                                .into()
-                            })
-                            .collect(),
-                    )
+                    column(finished.iter().enumerate().map(|(i, task)| {
+                        row([
+                            text(format!("{}|", i)).size(25).into(),
+                            match task.status {
+                                TaskStatus::Succeeded => {
+                                    text("SUCCEEDED").style(Color::from_rgb(0.0, 1.0, 0.0))
+                                }
+                                TaskStatus::Failed => {
+                                    text("FAILED").style(Color::from_rgb(1.0, 0.0, 0.0))
+                                }
+                                TaskStatus::Obsoleted => {
+                                    text("OBSOLETED").style(Color::from_rgb(0.7, 0.7, 0.7))
+                                }
+                            }
+                            .width(80.0)
+                            .size(20)
+                            .into(),
+                            text(&task.value).into(),
+                        ])
+                        .spacing(10)
+                        .width(Length::Fill)
+                        .into()
+                    }))
                     // pad right to avoid clipping scrollable
                     .padding([0, 15, 0, 0])
                     .into()
                 };
 
-                row(vec![
-                    column(vec![
+                row([
+                    column([
                         button("Collapse").on_press(Message::CollapseDock).into(),
                         button(match show_finished {
                             true => "Show Live Tasks",
@@ -1204,7 +1188,7 @@ impl Program for Todos {
                     ])
                     .spacing(10)
                     .into(),
-                    column(vec![input.into(), scrollable(tasks).into()])
+                    column([input.into(), scrollable(tasks).into()])
                         .spacing(10)
                         .width(Length::Shrink)
                         .into(),

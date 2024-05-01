@@ -1,4 +1,8 @@
 use derivative::Derivative;
+use iced_wgpu::wgpu::rwh::{
+    HasDisplayHandle, RawDisplayHandle, RawWindowHandle, XcbDisplayHandle, XcbWindowHandle,
+    XlibDisplayHandle, XlibWindowHandle,
+};
 use iced_winit::winit;
 use xcb::{x, XidNew};
 
@@ -48,24 +52,44 @@ impl std::error::Error for WmHintsError {
     }
 }
 
-pub fn create_state_mgr(
-    window: &dyn winit::platform::x11::WindowExtX11,
-) -> Result<WmHintsState, WmHintsError> {
-    Ok(WmHintsState {
-        screen_id: window
-            .xlib_screen_id()
-            .ok_or(WmHintsError::UnsupportedError)? as i32,
-        conn: unsafe {
-            xcb::Connection::from_raw_conn(
-                window
-                    .xcb_connection()
-                    .ok_or(WmHintsError::UnsupportedError)?
-                    as *mut xcb::ffi::xcb_connection_t,
+pub fn create_state_mgr(window: &winit::window::Window) -> Result<WmHintsState, WmHintsError> {
+    let raw_window_handle = winit::raw_window_handle::HasWindowHandle::window_handle(&window)
+        .unwrap()
+        .as_raw();
+    let raw_display_handle = window.display_handle().unwrap().as_raw();
+
+    let (screen_id, conn) = match raw_display_handle {
+        RawDisplayHandle::Xcb(XcbDisplayHandle {
+            screen,
+            connection: Some(connection),
+            ..
+        }) => (
+            screen,
+            connection.as_ptr() as *mut xcb::ffi::xcb_connection_t,
+        ),
+        RawDisplayHandle::Xlib(XlibDisplayHandle {
+            screen,
+            display: Some(display),
+            ..
+        }) => unsafe {
+            (
+                screen,
+                xcb::ffi::XGetXCBConnection(display.as_ptr() as *mut x11::xlib::_XDisplay),
             )
         },
-        window: unsafe {
-            x::Window::new(window.xlib_window().ok_or(WmHintsError::UnsupportedError)? as u32)
-        },
+        _ => return Err(WmHintsError::UnsupportedError),
+    };
+
+    let window_id = match raw_window_handle {
+        RawWindowHandle::Xcb(XcbWindowHandle { window, .. }) => u32::from(window),
+        RawWindowHandle::Xlib(XlibWindowHandle { window, .. }) => window as u32,
+        _ => return Err(WmHintsError::UnsupportedError),
+    };
+
+    Ok(WmHintsState {
+        screen_id,
+        conn: unsafe { xcb::Connection::from_raw_conn(conn) },
+        window: unsafe { x::Window::new(window_id) },
     })
 }
 

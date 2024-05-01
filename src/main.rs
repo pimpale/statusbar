@@ -5,6 +5,7 @@ mod utils;
 mod wm_hints;
 mod xdg_manager;
 
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -59,10 +60,11 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize winit
     let event_loop = EventLoopBuilder::with_user_event().build()?;
 
-    let window = winit::window::WindowBuilder::new()
-        .with_x11_window_type(vec![XWindowType::Dock])
-        .with_inner_size(LogicalSize::new(1, 50))
-        .build(&event_loop)?;
+    let window = Arc::new(winit::window::WindowBuilder::new()
+            .with_x11_window_type(vec![XWindowType::Dock])
+            .with_inner_size(LogicalSize::new(1, 50))
+            .build(&event_loop)?);
+
     let window_id = window::Id::unique();
 
     let physical_size = window.inner_size();
@@ -91,7 +93,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     });
 
-    let surface = instance.create_surface(window.window_handle()?)?;
+    let surface = instance.create_surface(window.clone())?;
 
     let (format, (device, queue)) = futures::futures::executor::block_on(async {
         let adapter = wgpu::util::initialize_adapter_from_env_or_default(&instance, Some(&surface))
@@ -135,7 +137,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut resized = false;
 
     // Initialize scene and GUI controls
-    let wm_state_mgr = wm_hints::create_state_mgr(&window).unwrap();
+    let wm_state_mgr = wm_hints::create_state_mgr(window.clone().as_ref()).unwrap();
     // initialize app state
     let todos = Todos::new(window_id, wm_state_mgr, nocache, remote_url).unwrap();
 
@@ -169,7 +171,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Run event loop
-    event_loop.run(move |event, _| {
+    event_loop.run(move |event, event_loop| {
         match event {
             Event::UserEvent(message) => {
                 // handle events that come in from completed futures
@@ -178,6 +180,8 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::WindowEvent { event, .. } => {
                 match event {
                     WindowEvent::CursorMoved { position, .. } => {
+                        dbg!("cursor moved");
+
                         cursor_position = Some(position);
                     }
                     WindowEvent::ModifiersChanged(new_modifiers) => {
@@ -195,8 +199,10 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                         event_loop.exit();
                     }
                     WindowEvent::RedrawRequested => {
+                        dbg!("redraw requested", state.is_queue_empty());
                         // If there are events pending
                         while !state.is_queue_empty() {
+                            dbg!("updating events");
                             // We update iced
                             let (unhandled_events, command) = state.update(
                                 viewport.logical_size(),
@@ -229,7 +235,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     &mut runtime,
                                     &mut clipboard,
                                     &mut debug,
-                                    &window,
+                                    &window.as_ref(),
                                 );
                             }
 
@@ -315,6 +321,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                     modifiers,
                 ) {
                     state.queue_event(event);
+                    window.request_redraw();
                 }
             }
             _ => {}
