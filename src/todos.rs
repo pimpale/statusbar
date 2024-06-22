@@ -6,7 +6,7 @@ use auth_service_api::request::ApiKeyNewWithEmailProps;
 use auth_service_api::response::ApiKey;
 use derivative::Derivative;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use iced_core::{alignment, widget, Color, Element, Length, Size, SmolStr};
+use iced_core::{alignment, widget, Color, Element, Length, Size};
 use iced_style::{theme, Theme};
 use iced_widget::runtime::command::Action;
 use iced_widget::runtime::{window, Command, Program};
@@ -24,6 +24,7 @@ use todoproxy_api::{
 };
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite;
+use tokio_tungstenite::tungstenite::http::Uri;
 
 use crate::utils;
 use crate::wm_hints;
@@ -334,7 +335,7 @@ impl Todos {
 
         Command::single(Action::Future(Box::pin(async move {
             Message::ConnectAttemptComplete(
-                tokio_tungstenite::connect_async(ws_task_updates_url)
+                tokio_tungstenite::connect_async(ws_task_updates_url.as_str())
                     .await
                     .map_err(report_tungstenite_error)
                     .map(|(w, _)| {
