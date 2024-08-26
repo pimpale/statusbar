@@ -872,18 +872,10 @@ impl Program for Todos {
                 state: State::NotLoggedIn(_),
                 expanded: false,
                 ..
-            } => button(
-                text("Click to Log In")
-                    .horizontal_alignment(alignment::Horizontal::Center)
-                    .vertical_alignment(alignment::Vertical::Center)
-                    .height(Length::Fill)
-                    .width(Length::Fill),
-            )
-            .style(theme::Button::Text)
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .on_press(Message::ExpandDock)
-            .into(),
+            } => button("Click to Log In")
+                .on_press(Message::ExpandDock)
+                .style(theme::Button::Text)
+                .into(),
             Self {
                 state:
                     State::NotLoggedIn(NotLoggedInState {
@@ -1023,7 +1015,6 @@ impl Program for Todos {
                 .into(),
             ])
             .spacing(10)
-            .padding(10)
             .into(),
             Self {
                 state: State::Connected(ConnectedState { snapshot, .. }),
@@ -1033,42 +1024,28 @@ impl Program for Todos {
                 None => container(button("Click to Add Task").on_press(Message::ExpandDock))
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .center_x()
-                    .center_y()
-                    .padding(10)
                     .into(),
-                Some(LiveTask { value, id }) => container(
-                    row([
-                        button("Succeeded")
-                            .height(Length::Fill)
-                            .style(theme::Button::Positive)
-                            .on_press(Message::Op(Op::Pop(id.clone(), TaskStatus::Succeeded)))
-                            .into(),
-                        button(text(value).horizontal_alignment(alignment::Horizontal::Center))
-                            .height(Length::Fill)
-                            .width(Length::Fill)
-                            .style(theme::Button::Text)
-                            .on_press(Message::ExpandDock)
-                            .into(),
-                        button("Failed")
-                            .height(Length::Fill)
-                            .style(theme::Button::Destructive)
-                            .on_press(Message::Op(Op::Pop(id.clone(), TaskStatus::Failed)))
-                            .into(),
-                        button("Obsoleted")
-                            .height(Length::Fill)
-                            .style(theme::Button::Secondary)
-                            .on_press(Message::Op(Op::Pop(id.clone(), TaskStatus::Obsoleted)))
-                            .into(),
-                    ])
-                    .height(Length::Fill)
-                    .spacing(10),
-                )
-                .width(Length::Fill)
+                Some(LiveTask { value, id }) => row([
+                    button("Succeeded")
+                        .style(theme::Button::Positive)
+                        .on_press(Message::Op(Op::Pop(id.clone(), TaskStatus::Succeeded)))
+                        .into(),
+                    button(text(value).horizontal_alignment(alignment::Horizontal::Center))
+                        .width(Length::Fill)
+                        .style(theme::Button::Text)
+                        .on_press(Message::ExpandDock)
+                        .into(),
+                    button("Failed")
+                        .style(theme::Button::Destructive)
+                        .on_press(Message::Op(Op::Pop(id.clone(), TaskStatus::Failed)))
+                        .into(),
+                    button("Obsoleted")
+                        .style(theme::Button::Secondary)
+                        .on_press(Message::Op(Op::Pop(id.clone(), TaskStatus::Obsoleted)))
+                        .into(),
+                ])
                 .height(Length::Fill)
-                .center_x()
-                .center_y()
-                .padding(10)
+                .spacing(10)
                 .into(),
             },
             Self {
@@ -1191,7 +1168,6 @@ impl Program for Todos {
                     .into(),
                     column([input.into(), scrollable(tasks).into()])
                         .spacing(10)
-                        .width(Length::Shrink)
                         .into(),
                 ])
                 .spacing(10)
