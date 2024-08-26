@@ -60,10 +60,12 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize winit
     let event_loop = EventLoopBuilder::with_user_event().build()?;
 
-    let window = Arc::new(winit::window::WindowBuilder::new()
+    let window = Arc::new(
+        winit::window::WindowBuilder::new()
             .with_x11_window_type(vec![XWindowType::Dock])
             .with_inner_size(LogicalSize::new(1, 50))
-            .build(&event_loop)?);
+            .build(&event_loop)?,
+    );
 
     let window_id = window::Id::unique();
 
@@ -176,12 +178,11 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::UserEvent(message) => {
                 // handle events that come in from completed futures
                 state.queue_message(message);
+                window.request_redraw();
             }
             Event::WindowEvent { event, .. } => {
                 match event {
                     WindowEvent::CursorMoved { position, .. } => {
-                        dbg!("cursor moved");
-
                         cursor_position = Some(position);
                     }
                     WindowEvent::ModifiersChanged(new_modifiers) => {
@@ -199,10 +200,8 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                         event_loop.exit();
                     }
                     WindowEvent::RedrawRequested => {
-                        dbg!("redraw requested", state.is_queue_empty());
                         // If there are events pending
                         while !state.is_queue_empty() {
-                            dbg!("updating events");
                             // We update iced
                             let (unhandled_events, command) = state.update(
                                 viewport.logical_size(),

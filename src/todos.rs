@@ -872,10 +872,17 @@ impl Program for Todos {
                 state: State::NotLoggedIn(_),
                 expanded: false,
                 ..
-            } => button("Click to Log In")
-                .on_press(Message::ExpandDock)
-                .style(theme::Button::Text)
-                .into(),
+            } => button(
+                text("Click to Log In")
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center)
+                    .height(Length::Fill)
+                    .width(Length::Fill),
+            )
+            .on_press(Message::ExpandDock)
+            .style(theme::Button::Text)
+            .width(Length::Fill)
+            .into(),
             Self {
                 state:
                     State::NotLoggedIn(NotLoggedInState {
@@ -934,7 +941,6 @@ impl Program for Todos {
                         error.into(),
                     ])
                     .spacing(10)
-                    .width(Length::Shrink)
                     .into(),
                 ])
                 .spacing(10)
