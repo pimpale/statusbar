@@ -2,7 +2,7 @@ use iced_futures::{Executor, Runtime};
 use iced_wgpu::core::{Clipboard, Size};
 use iced_widget::runtime::clipboard;
 use iced_widget::runtime::program::State;
-use iced_winit::runtime::{Command, Debug, Program};
+use iced_winit::runtime::{Debug, Program};
 use iced_winit::Proxy;
 use iced_winit::{conversion, winit};
 
