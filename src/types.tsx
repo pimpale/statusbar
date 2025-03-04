@@ -21,6 +21,27 @@ export const StateSnapshotSchema = z.object({
 });
 export type StateSnapshot = z.infer<typeof StateSnapshotSchema>;
 
+// Cache types
+export interface TodosCache {
+  serverApiUrl: string;
+  apiKey: string;
+}
+
+// App state types
+export type AppState =
+  | { type: "NotLoggedIn"; email: string; password: string; viewPassword: boolean; error?: string }
+  | { type: "Restored"; apiKey: string }
+  | { type: "NotConnected"; apiKey: string; error?: string }
+  | {
+      type: "Connected";
+      apiKey: string;
+      inputValue: string;
+      activeIdVal?: [string, string];
+      snapshot: StateSnapshot;
+      showFinished: boolean;
+      sessionId: string;
+    };
+
 // WebSocket operation kinds
 export const WebsocketOpKindSchema = z.object({
     OverwriteState: StateSnapshotSchema.optional(),

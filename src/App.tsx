@@ -2,8 +2,31 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import "./App.css";
-import { StateSnapshot, TaskStatus, WebsocketOp, WebsocketOpKind, WebsocketOpSchema, ServerInfoSchema, ServerInfo } from "./types";
-
+import {
+  StateSnapshot,
+  TaskStatus,
+  WebsocketOp,
+  WebsocketOpKind,
+  WebsocketOpSchema,
+  ServerInfoSchema,
+  ServerInfo,
+  AppState,
+  TodosCache
+} from "./types";
+import {
+  applyOperation,
+  currentTimeMillis,
+  randomString,
+  parseRestoreCommand,
+  parseMoveToEndCommand,
+  parseMoveCommand,
+  parseReverseCommand
+} from "./utils/taskUtils";
+import {
+  saveCache,
+  loadCache,
+  clearCache
+} from "./utils/storageUtils";
 
 // Extend Window interface to store WebSocket
 declare global {
@@ -11,131 +34,6 @@ declare global {
     todoWebSocket?: WebSocket;
   }
 }
-
-type TodosCache = {
-  serverApiUrl: string,
-  apiKey: string
-};
-
-// App state types
-type AppState =
-  | { type: "NotLoggedIn", email: string, password: string, viewPassword: boolean, error?: string }
-  | { type: "Restored", apiKey: string }
-  | { type: "NotConnected", apiKey: string, error?: string }
-  | {
-    type: "Connected",
-    apiKey: string,
-    inputValue: string,
-    activeIdVal?: [string, string],
-    snapshot: StateSnapshot,
-    showFinished: boolean,
-    sessionId: string,
-    heartbeatId: string
-  };
-
-// Utility functions to match the old Rust implementation
-const currentTimeMillis = (): number => {
-  return new Date().getTime();
-};
-
-const randomString = (): string => {
-  return Math.random().toString(36).substring(2, 18);
-};
-
-// Apply a WebSocket operation to the state snapshot
-const applyOperation = (snapshot: StateSnapshot, op: WebsocketOpKind): StateSnapshot => {
-  const newSnapshot = { ...snapshot };
-
-  if (op.OverwriteState) {
-    return op.OverwriteState;
-  }
-
-  if (op.InsLiveTask) {
-    newSnapshot.live = [
-      { id: op.InsLiveTask.id, value: op.InsLiveTask.value },
-      ...newSnapshot.live
-    ];
-    return newSnapshot;
-  }
-
-  if (op.RestoreFinishedTask) {
-    const finishedIndex = newSnapshot.finished.findIndex(task => task.id === op.RestoreFinishedTask!.id);
-    if (finishedIndex === -1) return snapshot;
-
-    const task = newSnapshot.finished[finishedIndex];
-    newSnapshot.finished = newSnapshot.finished.filter(t => t.id !== op.RestoreFinishedTask!.id);
-    newSnapshot.live = [
-      { id: task.id, value: task.value },
-      ...newSnapshot.live
-    ];
-    return newSnapshot;
-  }
-
-  if (op.EditLiveTask) {
-    newSnapshot.live = newSnapshot.live.map(task =>
-      task.id === op.EditLiveTask!.id ? { ...task, value: op.EditLiveTask!.value } : task
-    );
-    return newSnapshot;
-  }
-
-  if (op.DelLiveTask) {
-    newSnapshot.live = newSnapshot.live.filter(task => task.id !== op.DelLiveTask!.id);
-    return newSnapshot;
-  }
-
-  if (op.MvLiveTask) {
-    const fromIndex = newSnapshot.live.findIndex(task => task.id === op.MvLiveTask!.id_del);
-    const toIndex = newSnapshot.live.findIndex(task => task.id === op.MvLiveTask!.id_ins);
-
-    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
-      return snapshot;
-    }
-
-    const task = newSnapshot.live[fromIndex];
-    const newList = [...newSnapshot.live];
-    newList.splice(fromIndex, 1);
-    newList.splice(toIndex, 0, task);
-
-    newSnapshot.live = newList;
-    return newSnapshot;
-  }
-
-  if (op.RevLiveTask) {
-    const index1 = newSnapshot.live.findIndex(task => task.id === op.RevLiveTask!.id1);
-    const index2 = newSnapshot.live.findIndex(task => task.id === op.RevLiveTask!.id2);
-
-    if (index1 === -1 || index2 === -1) {
-      return snapshot;
-    }
-
-    const startIndex = Math.min(index1, index2);
-    const endIndex = Math.max(index1, index2);
-
-    const newList = [...newSnapshot.live];
-    const section = newList.slice(startIndex, endIndex + 1).reverse();
-    newList.splice(startIndex, section.length, ...section);
-
-    newSnapshot.live = newList;
-    return newSnapshot;
-  }
-
-  if (op.FinishLiveTask) {
-    const taskIndex = newSnapshot.live.findIndex(task => task.id === op.FinishLiveTask!.id);
-    if (taskIndex === -1) return snapshot;
-
-    const task = newSnapshot.live[taskIndex];
-
-    newSnapshot.live = newSnapshot.live.filter(t => t.id !== op.FinishLiveTask!.id);
-    newSnapshot.finished = [
-      { id: task.id, value: task.value, status: op.FinishLiveTask!.status },
-      ...newSnapshot.finished
-    ];
-
-    return newSnapshot;
-  }
-
-  return snapshot;
-};
 
 function App() {
   // Main app state
@@ -162,16 +60,10 @@ function App() {
 
   // Load cached data on mount
   useEffect(() => {
-    const cachedData = localStorage.getItem("todosCache");
-    if (cachedData) {
-      try {
-        const cache: TodosCache = JSON.parse(cachedData);
-        setServerApiUrl(cache.serverApiUrl);
-        setState({ type: "Restored", apiKey: cache.apiKey });
-      } catch (e) {
-        // Cache invalid, start fresh
-        setState({ type: "NotLoggedIn", email: "", password: "", viewPassword: false });
-      }
+    const cache = loadCache();
+    if (cache) {
+      setServerApiUrl(cache.serverApiUrl);
+      setState({ type: "Restored", apiKey: cache.apiKey });
     }
   }, []);
 
@@ -214,7 +106,7 @@ function App() {
       if (!infoResponse.ok) {
         throw new Error(`${infoResponse.status}: ${await infoResponse.text()}`);
       }
-  
+
       // Parse and validate the info response
       const info = ServerInfoSchema.parse(await infoResponse.json());
       const authPubApiUrl = info.authPubApiHref;
@@ -243,12 +135,11 @@ function App() {
         throw new Error("No API key returned");
       }
 
-      // Save to local storage
-      const cache: TodosCache = {
+      // Save to cache
+      saveCache({
         serverApiUrl,
         apiKey: apiKeyData.key
-      };
-      localStorage.setItem("todosCache", JSON.stringify(cache));
+      });
 
       // Connect to websocket
       connectWebsocket(apiKeyData.key);
@@ -260,10 +151,16 @@ function App() {
     }
   };
 
-  // Handle websocket connection
+  // Modify connectWebsocket to close existing connection first
   const connectWebsocket = async (apiKey: string) => {
     // Set state to connecting
     setState({ type: "NotConnected", apiKey });
+
+    // Close existing WebSocket if any
+    if (window.todoWebSocket) {
+      window.todoWebSocket.close(1000, "New connection requested");
+      window.todoWebSocket = undefined;
+    }
 
     try {
       // Create WebSocket URL
@@ -284,7 +181,6 @@ function App() {
 
       // Set up session tracking
       const sessionId = randomString();
-      let heartbeatId = randomString();
 
       // Handle connection open
       ws.addEventListener('open', () => {
@@ -300,7 +196,6 @@ function App() {
           },
           showFinished: false,
           sessionId,
-          heartbeatId
         });
 
         // Focus the input
@@ -325,7 +220,6 @@ function App() {
             return {
               ...prevState,
               snapshot: newSnapshot,
-              heartbeatId: randomString()
             };
           });
         } catch (error) {
@@ -338,40 +232,30 @@ function App() {
         }
       });
 
-      // Handle ping (keep connection alive)
-      ws.addEventListener('ping', () => {
-        // Reset heartbeat on ping
-        setState(prevState => {
-          if (prevState.type !== 'Connected') return prevState;
-          return {
-            ...prevState,
-            heartbeatId: randomString()
-          };
-        });
-      });
-
       // Handle errors
       ws.addEventListener('error', (error) => {
         console.error('WebSocket error:', error);
-        setState({
-          type: "NotConnected",
-          apiKey,
-          error: "WebSocket error occurred"
-        });
+        // Close with code 1011 (Internal Error)
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close(1011, "WebSocket error occurred");
+        }
+        // Don't set state here, let the close handler handle it
       });
 
       // Handle close
       ws.addEventListener('close', (event) => {
         console.log('WebSocket closed:', event.code, event.reason);
 
-        if (event.reason === 'Unauthorized') {
-          // If unauthorized, go back to login
+        if (event.reason === 'Unauthorized' || !loadCache()) {
+          const error = event.reason === 'Unauthorized' ? 'Session expired. Please log in again.' : undefined;
+
+          // If unauthorized or no cache (logged out), go back to login
           setState({
             type: "NotLoggedIn",
             email: "",
             password: "",
             viewPassword: false,
-            error: "Session expired. Please log in again."
+            error
           });
         } else {
           setState({
@@ -381,37 +265,6 @@ function App() {
           });
         }
       });
-
-      // Set up timeout checking
-      const TIMEOUT_DURATION = 30000; // 30 seconds
-
-      const checkHeartbeat = () => {
-        setState(prevState => {
-          if (prevState.type !== 'Connected') return prevState;
-
-          // If this is still the same session and heartbeat hasn't changed
-          if (prevState.sessionId === sessionId && prevState.heartbeatId === heartbeatId) {
-            // Connection timed out
-            ws.close();
-            return {
-              type: "NotConnected",
-              apiKey,
-              error: "WebSocket connection timed out"
-            };
-          }
-
-          // Update the heartbeat ID we're checking against
-          heartbeatId = prevState.heartbeatId;
-
-          return prevState;
-        });
-
-        // Always schedule next check regardless of state
-        setTimeout(checkHeartbeat, TIMEOUT_DURATION);
-      };
-
-      // Start the timeout checker
-      setTimeout(checkHeartbeat, TIMEOUT_DURATION);
 
       // Store WebSocket for sending messages later
       window.todoWebSocket = ws;
@@ -427,14 +280,15 @@ function App() {
 
   // Handle logout
   const logout = () => {
-    // Close WebSocket if open
-    if (window.todoWebSocket) {
-      window.todoWebSocket.close();
+    // Close WebSocket if open with a proper code and reason
+    if (window.todoWebSocket && window.todoWebSocket.readyState === WebSocket.OPEN) {
+      // 1000 is normal closure, clean exit
+      window.todoWebSocket.close(1000, "User logged out");
       window.todoWebSocket = undefined;
     }
 
-    // Clear local storage
-    localStorage.removeItem("todosCache");
+    // Clear cache
+    clearCache();
 
     // Reset state
     setState({ type: "NotLoggedIn", email: "", password: "", viewPassword: false });
@@ -467,6 +321,10 @@ function App() {
         if (state.snapshot.live.length > 0) {
           const task = state.snapshot.live[0];
           finishTask(task.id, "Succeeded");
+          setState({
+            ...state,
+            inputValue: ""
+          });
         }
         return;
 
@@ -474,6 +332,10 @@ function App() {
         if (state.snapshot.live.length > 0) {
           const task = state.snapshot.live[0];
           finishTask(task.id, "Failed");
+          setState({
+            ...state,
+            inputValue: ""
+          });
         }
         return;
 
@@ -481,53 +343,70 @@ function App() {
         if (state.snapshot.live.length > 0) {
           const task = state.snapshot.live[0];
           finishTask(task.id, "Obsoleted");
+          setState({
+            ...state,
+            inputValue: ""
+          });
         }
         return;
 
       case "r": // restore finished task
-        const rMatch = inputValue.match(/^r\s*(\d+)?$/);
-        if (rMatch) {
-          const index = rMatch[1] ? parseInt(rMatch[1]) : 0;
-          if (index < state.snapshot.finished.length) {
-            restoreFinishedTask(state.snapshot.finished[index].id);
-          }
+        const restoreIndex = parseRestoreCommand(inputValue);
+        if (restoreIndex !== null && restoreIndex < state.snapshot.finished.length) {
+          restoreFinishedTask(state.snapshot.finished[restoreIndex].id);
+          setState({
+            ...state,
+            inputValue: ""
+          });
         }
         return;
 
       case "q": // move task to end
-        const qMatch = inputValue.match(/^q\s*(\d+)?$/);
-        if (qMatch) {
-          const index = qMatch[1] ? parseInt(qMatch[1]) : 0;
-          if (state.snapshot.live.length > 1 && index < state.snapshot.live.length) {
-            moveTask(state.snapshot.live[index].id, state.snapshot.live[state.snapshot.live.length - 1].id);
-          }
+        const moveToEndIndex = parseMoveToEndCommand(inputValue);
+        if (moveToEndIndex !== null &&
+          state.snapshot.live.length > 1 &&
+          moveToEndIndex < state.snapshot.live.length) {
+          moveTask(
+            state.snapshot.live[moveToEndIndex].id,
+            state.snapshot.live[state.snapshot.live.length - 1].id
+          );
+          setState({
+            ...state,
+            inputValue: ""
+          });
         }
         return;
 
       case "mv": // move task
-        const mvMatch = inputValue.match(/^mv\s+(\d+)(?:\s+(\d+))?$/);
-        if (mvMatch) {
-          const fromIndex = parseInt(mvMatch[1]);
-          const toIndex = mvMatch[2] ? parseInt(mvMatch[2]) : 0;
+        const moveIndices = parseMoveCommand(inputValue);
+        if (moveIndices !== null) {
+          const [fromIndex, toIndex] = moveIndices;
 
           if (fromIndex !== toIndex &&
             fromIndex < state.snapshot.live.length &&
             toIndex < state.snapshot.live.length) {
             moveTask(state.snapshot.live[fromIndex].id, state.snapshot.live[toIndex].id);
+            setState({
+              ...state,
+              inputValue: ""
+            });
           }
         }
         return;
 
       case "rev": // reverse tasks
-        const revMatch = inputValue.match(/^rev\s+(\d+)(?:\s+(\d+))?$/);
-        if (revMatch) {
-          const fromIndex = parseInt(revMatch[1]);
-          const toIndex = revMatch[2] ? parseInt(revMatch[2]) : 0;
+        const reverseIndices = parseReverseCommand(inputValue);
+        if (reverseIndices !== null) {
+          const [fromIndex, toIndex] = reverseIndices;
 
           if (fromIndex !== toIndex &&
             fromIndex < state.snapshot.live.length &&
             toIndex < state.snapshot.live.length) {
             reverseTask(state.snapshot.live[fromIndex].id, state.snapshot.live[toIndex].id);
+            setState({
+              ...state,
+              inputValue: ""
+            });
           }
         }
         return;
@@ -907,19 +786,23 @@ function App() {
                   <div className="empty-message">You have not created a task yet...</div>
                 )
               ) : (
-                <div className="column padding-right-15">
-                  {snapshot.finished.map((task, i) => (
-                    <div key={task.id} className="row spacing-10 full-width">
-                      <div className="task-index">{i}|</div>
+                snapshot.finished.length > 0 ? (
+                  <div className="column padding-right-15">
+                    {snapshot.finished.map((task, i) => (
+                      <div key={task.id} className="row spacing-10 full-width">
+                        <div className="task-index">{i}|</div>
 
-                      <div className={`status-label status-${task.status.toLowerCase()}`}>
-                        {task.status.toUpperCase()}
+                        <div className={`status-label status-${task.status.toLowerCase()}`}>
+                          {task.status.toUpperCase()}
+                        </div>
+
+                        <div className="task-text">{task.value}</div>
                       </div>
-
-                      <div className="task-text">{task.value}</div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-message">No finished tasks yet...</div>
+                )
               )}
             </div>
           </div>
