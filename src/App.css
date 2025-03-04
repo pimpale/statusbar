@@ -1,0 +1,185 @@
+:root {
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+  color: #0f0f0f;
+  background-color: #f6f6f6;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+.container {
+  height: 100vh;
+  display: flex;
+  flex-direction: row;
+  padding: 10px;
+  transition: height 0.3s ease;
+  margin: 0;
+}
+
+.container.collapsed {
+  height: 50px;
+}
+
+.container.expanded {
+  height: 250px;
+}
+
+.row {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  width: 100%;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.spacing-10 {
+  gap: 10px;
+}
+
+.padding-right-15 {
+  padding-right: 15px;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.full-height {
+  height: 100%;
+}
+
+.full-size {
+  width: 100%;
+  height: 100%;
+}
+
+button {
+  padding: 5px 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+  background-color: #f0f0f0;
+  outline: none;
+}
+
+.button.text-button {
+  background-color: transparent;
+  border: none;
+  text-align: center;
+}
+
+.button.positive {
+  background-color: #4caf50;
+  color: white;
+  border-color: #388e3c;
+}
+
+.button.destructive {
+  background-color: #f44336;
+  color: white;
+  border-color: #d32f2f;
+}
+
+.button.secondary {
+  background-color: #9e9e9e;
+  color: white;
+  border-color: #757575;
+}
+
+input {
+  padding: 5px 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  outline: none;
+}
+
+.scrollable-container {
+  overflow-y: auto;
+  max-height: calc(100% - 40px);
+  flex-grow: 1;
+}
+
+.task-index {
+  font-size: 25px;
+  min-width: 25px;
+  display: flex;
+  align-items: center;
+}
+
+.task-button {
+  text-align: left;
+  justify-content: flex-start;
+  padding: 5px 10px;
+}
+
+.error {
+  color: #f44336;
+}
+
+.empty-message {
+  font-size: 25px;
+  color: #9e9e9e;
+  padding: 10px;
+}
+
+.status-label {
+  font-size: 14px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  width: 80px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.status-succeeded {
+  background-color: #4caf50;
+  color: white;
+}
+
+.status-failed {
+  background-color: #f44336;
+  color: white;
+}
+
+.status-obsoleted {
+  background-color: #9e9e9e;
+  color: white;
+}
+
+.task-text {
+  flex-grow: 1;
+  display: flex;
+  align-items: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #f6f6f6;
+    background-color: #2f2f2f;
+  }
+
+  input,
+  button {
+    color: #ffffff;
+    background-color: #0f0f0f98;
+  }
+  
+  button:active {
+    background-color: #0f0f0f69;
+  }
+  
+  .button.text-button {
+    color: #f6f6f6;
+  }
+}

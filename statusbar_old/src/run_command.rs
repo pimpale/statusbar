@@ -2,7 +2,7 @@ use iced_futures::{Executor, Runtime};
 use iced_wgpu::core::{Clipboard, Size};
 use iced_widget::runtime::clipboard;
 use iced_widget::runtime::program::State;
-use iced_winit::runtime::{Debug, Program};
+use iced_winit::runtime::{Command, Debug, Program};
 use iced_winit::Proxy;
 use iced_winit::{conversion, winit};
 
@@ -40,7 +40,7 @@ pub fn run_command<P, E>(
                     let _res = window.drag_window();
                 }
                 window::Action::Resize(id, size) => {
-                    window.request_inner_size(winit::dpi::LogicalSize {
+                    let _ = window.request_inner_size(winit::dpi::LogicalSize {
                         width: size.width,
                         height: size.height,
                     });
