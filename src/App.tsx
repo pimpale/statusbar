@@ -45,8 +45,9 @@ function App() {
   });
 
   // UI state
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded_raw] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [grabbed, setGrabbed_raw] = useState(false);
 
   // Default server URL
   const defaultServerUrl = "http://localhost:8080/public/";
@@ -58,6 +59,36 @@ function App() {
   const taskInputRef = useRef<HTMLInputElement>(null);
   const activeTaskInputRef = useRef<HTMLInputElement>(null);
 
+  // Create the new setGrabbed function that handles the Tauri invoke
+  const setGrabbed = async (newState: boolean) => {
+    try {
+      console.debug(`Attempting to ${newState ? 'grab' : 'ungrab'} keyboard...`);
+      if (newState) {
+        await invoke('grab_keyboard');
+      } else {
+        await invoke('ungrab_keyboard');
+      }
+      setGrabbed_raw(newState);
+    } catch (error) {
+      console.error('Failed to change keyboard grab state:', error);
+    }
+  };
+
+  // Create the new setExpand function that handles the Tauri invoke
+  const setExpand = async (newState: boolean) => {
+    try {
+      console.debug(`Attempting to ${newState ? 'expand' : 'unexpand'} window...`);
+      if (newState) {
+        await invoke('expand_window');
+      } else {
+        await invoke('unexpand_window');
+      }
+      setExpanded_raw(newState);
+    } catch (error) {
+      console.error('Failed to change window size:', error);
+    }
+  };
+
   // Load cached data on mount
   useEffect(() => {
     const cache = loadCache();
@@ -67,9 +98,26 @@ function App() {
     }
   }, []);
 
-  // Handle expanding the dock
-  const expandDock = () => {
-    setExpanded(true);
+  // Update all the existing code to use setGrabbed instead of setGrabbed_raw
+  const handleMouseEnter = async () => {
+    setFocused(true);
+    if (expanded && !grabbed) {
+      await setGrabbed(true);
+    }
+  };
+
+  const handleMouseLeave = async () => {
+    setFocused(false);
+    if (grabbed) {
+      await setGrabbed(false);
+    }
+  };
+
+  const expandDock = async () => {
+    await setExpand(true);
+    if (focused && !grabbed) {
+      await setGrabbed(true);
+    }
 
     // Focus the appropriate input
     setTimeout(() => {
@@ -81,9 +129,11 @@ function App() {
     }, 0);
   };
 
-  // Handle collapsing the dock
-  const collapseDock = () => {
-    setExpanded(false);
+  const collapseDock = async () => {
+    await setExpand(false);
+    if (grabbed) {
+      await setGrabbed(false);
+    }
 
     // Clear input and active task when collapsed
     if (state.type === "Connected") {
@@ -816,8 +866,9 @@ function App() {
   return (
     <main
       className={`container ${expanded ? 'expanded' : 'collapsed'}`}
-      onMouseEnter={() => setFocused(true)}
-      onMouseLeave={() => setFocused(false)}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      onMouseMove={handleMouseEnter}
     >
       {renderAppContent()}
     </main>

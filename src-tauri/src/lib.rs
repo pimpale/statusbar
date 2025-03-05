@@ -17,19 +17,25 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 async fn grab_keyboard(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
     let state = state.lock().unwrap();
-    match state.wm_manager.grab_keyboard() {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!("Failed to grab keyboard: {}", e)),
-    }
+    state.wm_manager.grab_keyboard().map_err(|e| format!("Failed to grab keyboard: {}", e))
 }
 
 #[tauri::command]
 async fn ungrab_keyboard(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
     let state = state.lock().unwrap();
-    match state.wm_manager.ungrab_keyboard() {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!("Failed to ungrab keyboard: {}", e)),
-    }
+    state.wm_manager.ungrab_keyboard().map_err(|e| format!("Failed to ungrab keyboard: {}", e))
+}
+
+#[tauri::command]
+async fn expand_window(window: tauri::Window) -> Result<(), String> {
+    window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 500.0, height: 500.0 }))
+        .map_err(|e| format!("Failed to expand window: {}", e))
+}
+
+#[tauri::command]
+async fn unexpand_window(window: tauri::Window) -> Result<(), String> {
+    window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 500.0, height: 200.0 }))
+        .map_err(|e| format!("Failed to unexpand window: {}", e))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -43,9 +49,13 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
-        .invoke_handler(tauri::generate_handler![grab_keyboard])
-        .invoke_handler(tauri::generate_handler![ungrab_keyboard])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            grab_keyboard,
+            ungrab_keyboard,
+            expand_window,
+            unexpand_window
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
