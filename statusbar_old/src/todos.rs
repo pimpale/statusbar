@@ -69,7 +69,7 @@ pub struct Todos {
     window_id: iced_core::window::Id,
     server_api_url: Url,
     wm_state: wm_hints::WmHintsState,
-    grabbed: bool,
+    has_focus: bool,
     focused: bool,
     expanded: bool,
     state: State,
@@ -304,7 +304,7 @@ impl Todos {
             nocache,
             server_api_url,
             wm_state,
-            grabbed: false,
+            has_focus: false,
             expanded: false,
             focused: false,
             state,
@@ -412,10 +412,9 @@ impl Program for Todos {
             Message::FocusDock => {
                 self.focused = true;
                 if self.expanded {
-                    if !self.grabbed {
-                        match self.wm_state.grab_keyboard().map_err(report_wmhints_error)
-                        {
-                            Ok(_) => self.grabbed = true,
+                    if !self.has_focus {
+                        match self.wm_state.focus_window().map_err(report_wmhints_error) {
+                            Ok(_) => self.has_focus = true,
                             _ => {}
                         }
                     }
@@ -424,9 +423,9 @@ impl Program for Todos {
             }
             Message::UnfocusDock => {
                 self.focused = false;
-                if self.grabbed {
-                    match self.wm_state.ungrab_keyboard().map_err(report_wmhints_error) {
-                        Ok(_) => self.grabbed = false,
+                if self.has_focus {
+                    match self.wm_state.unfocus_window().map_err(report_wmhints_error) {
+                        Ok(_) => self.has_focus = false,
                         _ => {}
                     }
                 }
@@ -436,8 +435,8 @@ impl Program for Todos {
                 self.expanded = true;
                 // grab keyboard focus
                 if self.focused {
-                    match self.wm_state.grab_keyboard().map_err(report_wmhints_error) {
-                        Ok(_) => self.grabbed = true,
+                    match self.wm_state.focus_window().map_err(report_wmhints_error) {
+                        Ok(_) => self.has_focus = true,
                         _ => {}
                     }
                 }
@@ -449,15 +448,15 @@ impl Program for Todos {
                 };
 
                 Command::batch([
-                    window::resize(self.window_id, Size::new(1.0, 250.0)),
+                    window::resize(self.window_id, Size::new(500.0, 250.0)),
                     command,
                 ])
             }
             Message::CollapseDock => {
                 self.expanded = false;
-                if self.grabbed {
-                    match self.wm_state.ungrab_keyboard().map_err(report_wmhints_error) {
-                        Ok(_) => self.grabbed = false,
+                if self.has_focus {
+                    match self.wm_state.unfocus_window().map_err(report_wmhints_error) {
+                        Ok(_) => self.has_focus = false,
                         _ => {}
                     }
                 }
@@ -469,7 +468,7 @@ impl Program for Todos {
                     _ => {}
                 }
 
-                window::resize(self.window_id, Size::new(1.0, 50.0))
+                window::resize(self.window_id, Size::new(500.0, 50.0))
             }
             Message::EditInput(value) => {
                 match self.state {

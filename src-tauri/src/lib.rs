@@ -1,11 +1,15 @@
 use std::sync::Mutex;
 
-use tauri::Manager;
+use tauri::{Manager, UserAttentionType};
 mod wm_hints;
 
+const WINDOW_WIDTH: f64 = 500.0;
+const WINDOW_HEIGHT: f64 = 50.0;
+const WINDOW_HEIGHT_EXPANDED: f64 = 500.0;
+
+
 struct AppState {
-    wm_manager: wm_hints::WmHintsState,
-    // other app state variables
+    container_wm_manager: wm_hints::WmHintsState,
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -15,50 +19,41 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-async fn grab_keyboard(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
+async fn focus_window(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
     let state = state.lock().unwrap();
-    state.wm_manager.grab_keyboard().map_err(|e| format!("Failed to grab keyboard: {}", e))
+    state
+        .container_wm_manager
+        .focus_window()
+        .map_err(|e| format!("Failed to focus window: {}", e))
 }
 
 #[tauri::command]
-async fn ungrab_keyboard(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
+async fn unfocus_window(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
     let state = state.lock().unwrap();
-    state.wm_manager.ungrab_keyboard().map_err(|e| format!("Failed to ungrab keyboard: {}", e))
+    state
+        .container_wm_manager
+        .unfocus_window()
+        .map_err(|e| format!("Failed to unfocus window: {}", e))
 }
 
 #[tauri::command]
 async fn expand_window(window: tauri::Window) -> Result<(), String> {
-    window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 500.0, height: 500.0 }))
+    window
+        .set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: WINDOW_WIDTH,
+            height: WINDOW_HEIGHT_EXPANDED,
+        }))
         .map_err(|e| format!("Failed to expand window: {}", e))
 }
 
 #[tauri::command]
 async fn unexpand_window(window: tauri::Window) -> Result<(), String> {
-    window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 500.0, height: 200.0 }))
+    window
+        .set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: WINDOW_WIDTH,
+            height: WINDOW_HEIGHT,
+        }))
         .map_err(|e| format!("Failed to unexpand window: {}", e))
-}
-
-#[tauri::command]
-async fn set_window_type(state: tauri::State<'_, Mutex<AppState>>, window_type: &str) -> Result<(), String> {
-    let state = state.lock().unwrap();
-    let window_type = match window_type {
-        "dock" => wm_hints::WindowType::Dock,
-        "toolbar" => wm_hints::WindowType::Toolbar,
-        "menu" => wm_hints::WindowType::Menu,
-        "utility" => wm_hints::WindowType::Utility,
-        "splash" => wm_hints::WindowType::Splash,
-        "dialog" => wm_hints::WindowType::Dialog,
-        "dropdown_menu" => wm_hints::WindowType::DropdownMenu,
-        "popup_menu" => wm_hints::WindowType::PopupMenu,
-        "tooltip" => wm_hints::WindowType::Tooltip,
-        "notification" => wm_hints::WindowType::Notification,
-        "combo" => wm_hints::WindowType::Combo,
-        "dnd" => wm_hints::WindowType::Dnd,
-        "normal" => wm_hints::WindowType::Normal,
-        _ => return Err(format!("Invalid window type: {}", window_type)),
-    };
-    state.wm_manager.set_window_type(window_type)
-        .map_err(|e| format!("Failed to set window type: {}", e))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -66,19 +61,22 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
+            let container_wm_manager = wm_hints::create_state_mgr(&window).unwrap();
+
+            container_wm_manager.dock_window(WINDOW_HEIGHT_EXPANDED as u32).unwrap();
             app.manage(Mutex::new(AppState {
-                wm_manager: wm_hints::create_state_mgr(&window).unwrap(),
+                container_wm_manager,
             }));
+            window.request_user_attention(Some(UserAttentionType::Informational)).unwrap();
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet,
-            grab_keyboard,
-            ungrab_keyboard,
+            focus_window,
+            unfocus_window,
             expand_window,
             unexpand_window,
-            set_window_type
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

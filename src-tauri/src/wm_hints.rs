@@ -12,6 +12,7 @@ pub struct WmHintsState {
     #[derivative(Debug = "ignore")]
     conn: xcb::Connection,
     window: xcb::x::Window,
+    root_window: xcb::x::Window,
 }
 
 #[derive(Debug)]
@@ -19,7 +20,7 @@ pub struct WmHintsState {
 pub enum WmHintsError {
     UnsupportedError,
     XcbError(xcb::Error),
-    XcbGrabStatusError(xcb::x::GrabStatus),
+    ScreenNotFound,
 }
 
 impl std::fmt::Display for WmHintsError {
@@ -27,17 +28,7 @@ impl std::fmt::Display for WmHintsError {
         match self {
             Self::UnsupportedError => write!(f, "Platform does not support X11"),
             Self::XcbError(e) => write!(f, "XCB: {}", e),
-            Self::XcbGrabStatusError(e) => write!(
-                f,
-                "Couldn't Grab: {}",
-                match e {
-                    x::GrabStatus::AlreadyGrabbed => "already grabbed",
-                    x::GrabStatus::InvalidTime => "invalid time",
-                    x::GrabStatus::NotViewable => "not viewable",
-                    x::GrabStatus::Frozen => "frozen",
-                    _ => "unknown",
-                }
-            ),
+            Self::ScreenNotFound => write!(f, "X11 screen not found"),
         }
     }
 }
@@ -49,6 +40,24 @@ impl std::error::Error for WmHintsError {
             _ => None,
         }
     }
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum WindowType {
+    Dock,
+    Toolbar,
+    Menu,
+    Utility,
+    Splash,
+    Dialog,
+    DropdownMenu,
+    PopupMenu,
+    Tooltip,
+    Notification,
+    Combo,
+    Dnd,
+    Normal,
 }
 
 pub fn create_state_mgr<T>(window: &T) -> Result<WmHintsState, WmHintsError>
@@ -86,43 +95,63 @@ where
         _ => return Err(WmHintsError::UnsupportedError),
     };
 
+    let conn = unsafe { xcb::Connection::from_raw_conn(conn) };
+    
+    // Get the root window
+    let setup = conn.get_setup();
+    let screen = setup.roots().nth(screen_id as usize)
+        .ok_or(WmHintsError::ScreenNotFound)?;
+    let root_window = screen.root();
+
     Ok(WmHintsState {
         screen_id,
-        conn: unsafe { xcb::Connection::from_raw_conn(conn) },
+        conn,
         window: unsafe { x::Window::new(window_id) },
+        root_window,
     })
 }
 
 impl WmHintsState {
-    pub fn grab_keyboard(&self) -> Result<(), WmHintsError> {
-        let cookie = self.conn.send_request(&x::GrabKeyboard {
-            owner_events: false,
-            grab_window: self.window,
-            time: x::CURRENT_TIME,
-            keyboard_mode: x::GrabMode::Async,
-            pointer_mode: x::GrabMode::Async,
-        });
-        let reply = self
-            .conn
-            .wait_for_reply(cookie)
-            .map_err(|x| WmHintsError::XcbError(x))?;
 
-        // return based on reply status
-        match reply.status() {
-            x::GrabStatus::Success => Ok(()),
-            e => Err(WmHintsError::XcbGrabStatusError(e)),
-        }
-    }
-
-    pub fn ungrab_keyboard(&self) -> Result<(), WmHintsError> {
+    pub fn focus_window(&self) -> Result<(), WmHintsError> {
         self.conn
-            .send_and_check_request(&x::UngrabKeyboard {
+            .send_and_check_request(&x::SetInputFocus {
+                focus: self.window,
+                revert_to: x::InputFocus::PointerRoot,
                 time: x::CURRENT_TIME,
             })
             .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
         Ok(())
     }
 
+    pub fn unfocus_window(&self) -> Result<(), WmHintsError> {
+        self.conn
+            .send_and_check_request(&x::SetInputFocus {
+                focus: self.root_window,
+                revert_to: x::InputFocus::PointerRoot,
+                time: x::CURRENT_TIME,
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+        Ok(())
+    }
+
+    pub fn map_window(&self) -> Result<(), WmHintsError> {
+        self.conn
+            .send_and_check_request(&x::MapWindow {
+                window: self.window,
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+        Ok(())
+    }
+
+    pub fn unmap_window(&self) -> Result<(), WmHintsError> {
+        self.conn
+            .send_and_check_request(&x::UnmapWindow {
+                window: self.window,
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+        Ok(())
+    }
 
     fn atom_name(&self, atom: xcb::x::Atom) -> String {
         let cookie = self.conn.send_request(&x::GetAtomName { atom });
@@ -130,7 +159,7 @@ impl WmHintsState {
         reply.name().to_string()
     }
 
-    pub fn set_window_type(&self, window_type: WindowType) -> Result<(), WmHintsError> {
+    fn set_window_type(&self, window_type: WindowType) -> Result<(), WmHintsError> {
         // Get the _NET_WM_WINDOW_TYPE atom
         let wm_type_cookie = self.conn.send_request(&x::InternAtom {
             only_if_exists: true,
@@ -139,10 +168,6 @@ impl WmHintsState {
         let wm_type_reply = self.conn
             .wait_for_reply(wm_type_cookie)
             .map_err(|x| WmHintsError::XcbError(x))?;
-        
-        println!("wm_type_reply: {:?}", wm_type_reply);
-        println!("wm_type_reply.atom(): {:?}", self.atom_name(wm_type_reply.atom()));
-        
         
         // Get the specific window type atom (e.g. _NET_WM_WINDOW_TYPE_DOCK)
         let type_name = match window_type {
@@ -168,9 +193,6 @@ impl WmHintsState {
         let type_reply = self.conn
             .wait_for_reply(type_cookie)
             .map_err(|x| WmHintsError::XcbError(x))?;
-        
-        println!("type_reply: {:?}", type_reply);
-        println!("type_reply.atom(): {:?}", self.atom_name(type_reply.atom()));
 
         // Set the window type property
         self.conn
@@ -185,21 +207,34 @@ impl WmHintsState {
 
         Ok(())
     }
-}
 
-#[derive(Debug, Clone, Copy)]
-pub enum WindowType {
-    Dock,
-    Toolbar,
-    Menu,
-    Utility,
-    Splash,
-    Dialog,
-    DropdownMenu,
-    PopupMenu,
-    Tooltip,
-    Notification,
-    Combo,
-    Dnd,
-    Normal,
+    fn configure_window(&self, height: u32) -> Result<(), WmHintsError> {
+        use x::ConfigWindow;
+        let values = [ConfigWindow::Height(height)];
+
+        self.conn
+            .send_and_check_request(&x::ConfigureWindow {
+                window: self.window,
+                value_list: &values,
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+        
+        Ok(())
+    }
+
+    pub fn dock_window(&self, height: u32) -> Result<(), WmHintsError> {
+        // First unmap the window
+        self.unmap_window()?;
+
+        // Configure the window height
+        self.configure_window(height)?;
+
+        // Set it as a dock window
+        self.set_window_type(WindowType::Dock)?;
+
+        // Finally remap the window
+        self.map_window()?;
+
+        Ok(())
+    }
 }

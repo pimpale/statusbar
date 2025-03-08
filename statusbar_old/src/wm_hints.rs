@@ -112,29 +112,22 @@ where
 }
 
 impl WmHintsState {
-    pub fn grab_keyboard(&self) -> Result<(), WmHintsError> {
-        let cookie = self.conn.send_request(&x::GrabKeyboard {
-            owner_events: false,
-            grab_window: self.window,
-            time: x::CURRENT_TIME,
-            keyboard_mode: x::GrabMode::Async,
-            pointer_mode: x::GrabMode::Async,
-        });
-        let reply = self
-            .conn
-            .wait_for_reply(cookie)
-            .map_err(|x| WmHintsError::XcbError(x))?;
-
-        // return based on reply status
-        match reply.status() {
-            x::GrabStatus::Success => Ok(()),
-            e => Err(WmHintsError::XcbGrabStatusError(e)),
-        }
+    pub fn focus_window(&self) -> Result<(), WmHintsError> {
+        self.conn
+            .send_and_check_request(&x::SetInputFocus {
+                focus: self.window,
+                revert_to: x::InputFocus::PointerRoot,
+                time: x::CURRENT_TIME,
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+        Ok(())
     }
 
-    pub fn ungrab_keyboard(&self) -> Result<(), WmHintsError> {
+    pub fn unfocus_window(&self) -> Result<(), WmHintsError> {
         self.conn
-            .send_and_check_request(&x::UngrabKeyboard {
+            .send_and_check_request(&x::SetInputFocus {
+                focus: x::InputFocus::PointerRoot,
+                revert_to: x::InputFocus::PointerRoot,
                 time: x::CURRENT_TIME,
             })
             .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
@@ -242,6 +235,32 @@ impl WmHintsState {
         self.map_window()?;
 
         Ok(())
+    }
+
+    pub fn get_child_window(&self) -> Result<WmHintsState, WmHintsError> {
+        // Query the window tree to get children
+        let cookie = self.conn.send_request(&x::QueryTree {
+            window: self.window,
+        });
+        
+        let reply = self.conn
+            .wait_for_reply(cookie)
+            .map_err(|x| WmHintsError::XcbError(x))?;
+
+        // Get the first child window if any exist
+        let first_child = reply.children()
+            .first()
+            .ok_or(WmHintsError::UnsupportedError)?;
+
+        // Create a new connection from the raw connection pointer
+        let conn_ptr = self.conn.get_raw_conn();
+        
+        // Create a new WmHintsState for the child window
+        Ok(WmHintsState {
+            screen_id: self.screen_id,
+            conn: unsafe { xcb::Connection::from_raw_conn(conn_ptr) },
+            window: *first_child,
+        })
     }
 }
 

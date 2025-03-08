@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
-import "./App.css";
+import { Button, Form, Container, Row, Col, Stack, Badge, ListGroup } from 'react-bootstrap';
 import {
   StateSnapshot,
   TaskStatus,
@@ -47,7 +47,7 @@ function App() {
   // UI state
   const [expanded, setExpanded_raw] = useState(false);
   const [focused, setFocused] = useState(false);
-  const [grabbed, setGrabbed_raw] = useState(false);
+  const [windowFocused, setWindowFocused_raw] = useState(false);
 
   // Default server URL
   const defaultServerUrl = "http://localhost:8080/public/";
@@ -59,18 +59,18 @@ function App() {
   const taskInputRef = useRef<HTMLInputElement>(null);
   const activeTaskInputRef = useRef<HTMLInputElement>(null);
 
-  // Create the new setGrabbed function that handles the Tauri invoke
-  const setGrabbed = async (newState: boolean) => {
+  // Create the new setWindowFocused function that handles the Tauri invoke
+  const setWindowFocused = async (newState: boolean) => {
     try {
-      console.debug(`Attempting to ${newState ? 'grab' : 'ungrab'} keyboard...`);
+      console.debug(`Attempting to ${newState ? 'focus' : 'unfocus'} window...`);
       if (newState) {
-        await invoke('grab_keyboard');
+        await invoke('focus_window');
       } else {
-        await invoke('ungrab_keyboard');
+        await invoke('unfocus_window');
       }
-      setGrabbed_raw(newState);
+      setWindowFocused_raw(newState);
     } catch (error) {
-      console.error('Failed to change keyboard grab state:', error);
+      console.error('Failed to change window focus state:', error);
     }
   };
 
@@ -96,32 +96,27 @@ function App() {
       setServerApiUrl(cache.serverApiUrl);
       setState({ type: "Restored", apiKey: cache.apiKey });
     }
-
-    // Set window type to dock
-    invoke('set_window_type', { windowType: 'dock' })
-      .catch(error => console.error('Failed to set window type:', error));
   }, []);
 
-  // Update all the existing code to use setGrabbed instead of setGrabbed_raw
+  // Update all the existing code to use setWindowFocused instead of setGrabbed
   const handleMouseEnter = async () => {
     setFocused(true);
-    if (expanded && !grabbed) {
-      await setGrabbed(true);
+    if (expanded && !windowFocused) {
+      await setWindowFocused(true);
     }
   };
 
   const handleMouseLeave = async () => {
     setFocused(false);
-    if (grabbed) {
-      await setGrabbed(false);
+    if (windowFocused) {
+      await setWindowFocused(false);
     }
   };
 
   const expandDock = async () => {
     await setExpand(true);
-    await invoke('set_window_type', { windowType: 'dock' })
-    if (focused && !grabbed) {
-      await setGrabbed(true);
+    if (focused && !windowFocused) {
+      await setWindowFocused(true);
     }
 
     // Focus the appropriate input
@@ -136,8 +131,8 @@ function App() {
 
   const collapseDock = async () => {
     await setExpand(false);
-    if (grabbed) {
-      await setGrabbed(false);
+    if (windowFocused) {
+      await setWindowFocused(false);
     }
 
     // Clear input and active task when collapsed
@@ -614,102 +609,116 @@ function App() {
     // Not logged in, collapsed
     if (state.type === "NotLoggedIn" && !expanded) {
       return (
-        <button
-          className="button text-button full-size"
+        <Button
+          variant="link"
+          className="w-100 h-100"
           onClick={expandDock}
         >
           Click to Log In
-        </button>
+        </Button>
       );
     }
 
     // Not logged in, expanded
     if (state.type === "NotLoggedIn" && expanded) {
       return (
-        <div className="row">
-          <div className="column spacing-10">
-            <button onClick={collapseDock}>Collapse</button>
-            <button onClick={() => setState({ ...state, viewPassword: !state.viewPassword })}>
-              {state.viewPassword ? "Hide Password" : "View Password"}
-            </button>
-          </div>
-          <div className="column spacing-10">
-            <input
-              ref={emailInputRef}
-              type="email"
-              placeholder="Email"
-              value={state.email}
-              onChange={e => setState({ ...state, email: e.target.value, error: undefined })}
-              onKeyDown={e => e.key === "Enter" && passwordInputRef.current?.focus()}
-            />
-            <input
-              ref={passwordInputRef}
-              type={state.viewPassword ? "text" : "password"}
-              placeholder="Password"
-              value={state.password}
-              onChange={e => setState({ ...state, password: e.target.value, error: undefined })}
-              onKeyDown={e => e.key === "Enter" && state.email && state.password ? attemptLogin() : null}
-            />
-            <button onClick={attemptLogin}>Submit</button>
-            {state.error && <div className="error">{state.error}</div>}
-          </div>
-        </div>
+          <Row className="g-2">
+            <Col xs="auto">
+              <Stack gap={2}>
+                <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
+                <Button variant="secondary" onClick={() => setState({ ...state, viewPassword: !state.viewPassword })}>
+                  {state.viewPassword ? "Hide Password" : "View Password"}
+                </Button>
+              </Stack>
+            </Col>
+            <Col>
+              <Stack gap={2}>
+                <Form.Control
+                  ref={emailInputRef}
+                  type="email"
+                  placeholder="Email"
+                  value={state.email}
+                  onChange={e => setState({ ...state, email: e.target.value, error: undefined })}
+                  onKeyDown={e => e.key === "Enter" && passwordInputRef.current?.focus()}
+                />
+                <Form.Control
+                  ref={passwordInputRef}
+                  type={state.viewPassword ? "text" : "password"}
+                  placeholder="Password"
+                  value={state.password}
+                  onChange={e => setState({ ...state, password: e.target.value, error: undefined })}
+                  onKeyDown={e => e.key === "Enter" && state.email && state.password ? attemptLogin() : null}
+                />
+                <Button variant="primary" onClick={attemptLogin}>Submit</Button>
+                {state.error && <div className="text-danger">{state.error}</div>}
+              </Stack>
+            </Col>
+          </Row>
       );
     }
 
     // Restored cache
     if (state.type === "Restored") {
       return (
-        <button
-          className="button text-button full-size"
+        <Button
+          variant="link"
+          className="w-100 h-100"
           onClick={() => connectWebsocket(state.apiKey)}
         >
           Resume Session
-        </button>
+        </Button>
       );
     }
 
     // Not connected, collapsed
     if (state.type === "NotConnected" && !expanded) {
       return (
-        <div className="row">
-          <button
-            className="button text-button full-size"
-            onClick={expandDock}
-          >
-            {state.error ?
-              <span className="error">{state.error}</span> :
-              "Connecting..."}
-          </button>
-
-          {state.error && (
-            <button onClick={() => connectWebsocket(state.apiKey)}>
-              Retry
-            </button>
-          )}
-        </div>
+          <Row className="g-2">
+            <Col>
+              <Button
+                variant="link"
+                className="w-100 h-100"
+                onClick={expandDock}
+              >
+                {state.error ?
+                  <span className="text-danger">{state.error}</span> :
+                  "Connecting..."}
+              </Button>
+            </Col>
+            {state.error && (
+              <Col xs="auto">
+                <Button variant="secondary" onClick={() => connectWebsocket(state.apiKey)}>
+                  Retry
+                </Button>
+              </Col>
+            )}
+          </Row>
       );
     }
 
     // Not connected, expanded
     if (state.type === "NotConnected" && expanded) {
       return (
-        <div className="row spacing-10">
-          <div className="column spacing-10">
-            <button onClick={collapseDock}>Collapse</button>
-            <button onClick={logout}>Log Out</button>
-          </div>
-          <div className="column spacing-10">
-            {state.error ? (
-              <>
-                <div className="error">{state.error}</div>
-                <button onClick={() => connectWebsocket(state.apiKey)}>Retry</button>
-              </>
-            ) : (
-              <div>Connecting...</div>
-            )}
-          </div>
-        </div>
+          <Row className="g-2">
+            <Col xs="auto">
+              <Stack gap={2}>
+                <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
+                <Button variant="secondary" onClick={logout}>Log Out</Button>
+              </Stack>
+            </Col>
+            <Col>
+              <Stack gap={2}>
+                {state.error ? (
+                  <>
+                    <div className="text-danger">{state.error}</div>
+                    <Button variant="primary" onClick={() => connectWebsocket(state.apiKey)}>Retry</Button>
+                  </>
+                ) : (
+                  <div>Connecting...</div>
+                )}
+              </Stack>
+            </Col>
+          </Row>
       );
     }
 
@@ -719,44 +728,51 @@ function App() {
 
       if (liveTasks.length === 0) {
         return (
-          <div className="container">
-            <button onClick={expandDock}>Click to Add Task</button>
-          </div>
+            <Button variant="link" className="w-100" onClick={expandDock}>Click to Add Task</Button>
         );
       }
 
       // Show the first task
       const firstTask = liveTasks[0];
       return (
-        <div className="row spacing-10 full-height">
-          <button
-            className="button positive"
-            onClick={() => finishTask(firstTask.id, "Succeeded")}
-          >
-            Succeeded
-          </button>
+          <Row className="g-2 h-100 align-items-center">
+            <Col xs="auto">
+              <Button
+                variant="success"
+                onClick={() => finishTask(firstTask.id, "Succeeded")}
+              >
+                Succeeded
+              </Button>
+            </Col>
 
-          <button
-            className="button text-button full-width"
-            onClick={expandDock}
-          >
-            {firstTask.value}
-          </button>
+            <Col>
+              <Button
+                variant="link"
+                className="w-100 text-start"
+                onClick={expandDock}
+              >
+                {firstTask.value}
+              </Button>
+            </Col>
 
-          <button
-            className="button destructive"
-            onClick={() => finishTask(firstTask.id, "Failed")}
-          >
-            Failed
-          </button>
+            <Col xs="auto">
+              <Button
+                variant="danger"
+                onClick={() => finishTask(firstTask.id, "Failed")}
+              >
+                Failed
+              </Button>
+            </Col>
 
-          <button
-            className="button secondary"
-            onClick={() => finishTask(firstTask.id, "Obsoleted")}
-          >
-            Obsoleted
-          </button>
-        </div>
+            <Col xs="auto">
+              <Button
+                variant="secondary"
+                onClick={() => finishTask(firstTask.id, "Obsoleted")}
+              >
+                Obsoleted
+              </Button>
+            </Col>
+          </Row>
       );
     }
 
@@ -765,103 +781,133 @@ function App() {
       const { snapshot, showFinished, activeIdVal, inputValue } = state;
 
       return (
-        <div className="row spacing-10">
-          <div className="column spacing-10">
-            <button onClick={collapseDock}>Collapse</button>
-            <button onClick={() => setState({ ...state, showFinished: !showFinished })}>
-              {showFinished ? "Show Live Tasks" : "Show Finished Tasks"}
-            </button>
-            <button onClick={logout}>Log Out</button>
-          </div>
+          <Row className="g-2">
+            <Col xs="auto">
+              <Stack gap={2}>
+                <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
+                <Button variant="secondary" onClick={() => setState({ ...state, showFinished: !showFinished })}>
+                  {showFinished ? "Show Live Tasks" : "Show Finished Tasks"}
+                </Button>
+                <Button variant="secondary" onClick={logout}>Log Out</Button>
+              </Stack>
+            </Col>
 
-          <div className="column spacing-10 full-width">
-            <input
-              ref={taskInputRef}
-              placeholder="What needs to be done?"
-              value={inputValue}
-              onChange={e => setState({ ...state, inputValue: e.target.value })}
-              onKeyDown={e => e.key === "Enter" && submitTask()}
-              onFocus={() => setActiveTask(undefined)}
-            />
+            <Col>
+              <Stack gap={2}>
+                <Form.Control
+                  ref={taskInputRef}
+                  placeholder="What needs to be done?"
+                  value={inputValue}
+                  onChange={e => setState({ ...state, inputValue: e.target.value })}
+                  onKeyDown={e => e.key === "Enter" && submitTask()}
+                  onFocus={() => setActiveTask(undefined)}
+                />
+                  {!showFinished ? (
+                    snapshot.live.length > 0 ? (
+                      <ListGroup>
+                        {snapshot.live.map((task, i) => (
+                          <ListGroup.Item key={task.id} className="p-2">
+                            <Row className="g-2 align-items-center">
+                              <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
+                                {i}|
+                              </Col>
 
-            <div className="scrollable-container">
-              {!showFinished ? (
-                snapshot.live.length > 0 ? (
-                  <div className="column padding-right-15">
-                    {snapshot.live.map((task, i) => (
-                      <div key={task.id} className="row spacing-10">
-                        <div className="task-index">{i}|</div>
+                              {activeIdVal && activeIdVal[0] === task.id ? (
+                                <>
+                                  <Col xs="auto">
+                                    <Button
+                                      variant="success"
+                                      onClick={() => finishTask(task.id, "Succeeded")}
+                                    >
+                                      Task Succeeded
+                                    </Button>
+                                  </Col>
 
-                        {activeIdVal && activeIdVal[0] === task.id ? (
-                          <>
-                            <button
-                              className="button positive"
-                              onClick={() => finishTask(task.id, "Succeeded")}
-                            >
-                              Task Succeeded
-                            </button>
+                                  <Col>
+                                    <Form.Control
+                                      ref={activeTaskInputRef}
+                                      value={activeIdVal[1]}
+                                      onChange={e => setState({
+                                        ...state,
+                                        activeIdVal: [activeIdVal[0], e.target.value]
+                                      })}
+                                      onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
+                                    />
+                                  </Col>
 
-                            <input
-                              ref={activeTaskInputRef}
-                              value={activeIdVal[1]}
-                              onChange={e => setState({
-                                ...state,
-                                activeIdVal: [activeIdVal[0], e.target.value]
-                              })}
-                              onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
-                              className="full-width"
-                            />
+                                  <Col xs="auto">
+                                    <Button
+                                      variant="danger"
+                                      onClick={() => finishTask(task.id, "Failed")}
+                                    >
+                                      Task Failed
+                                    </Button>
+                                  </Col>
 
-                            <button
-                              className="button destructive"
-                              onClick={() => finishTask(task.id, "Failed")}
-                            >
-                              Task Failed
-                            </button>
+                                  <Col xs="auto">
+                                    <Button
+                                      variant="secondary"
+                                      onClick={() => finishTask(task.id, "Obsoleted")}
+                                    >
+                                      Task Obsoleted
+                                    </Button>
+                                  </Col>
+                                </>
+                              ) : (
+                                <Col>
+                                  <Button
+                                    variant="link"
+                                    className="w-100 text-start p-0"
+                                    onClick={() => setActiveTask(task.id)}
+                                  >
+                                    {task.value}
+                                  </Button>
+                                </Col>
+                              )}
+                            </Row>
+                          </ListGroup.Item>
+                        ))}
+                      </ListGroup>
+                    ) : (
+                      <div className="text-muted fs-4 p-3">You have not created a task yet...</div>
+                    )
+                  ) : (
+                    snapshot.finished.length > 0 ? (
+                      <ListGroup>
+                        {snapshot.finished.map((task, i) => (
+                          <ListGroup.Item key={task.id} className="p-2">
+                            <Row className="g-2 align-items-center">
+                              <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
+                                {i}|
+                              </Col>
 
-                            <button
-                              className="button secondary"
-                              onClick={() => finishTask(task.id, "Obsoleted")}
-                            >
-                              Task Obsoleted
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            className="button text-button full-width task-button"
-                            onClick={() => setActiveTask(task.id)}
-                          >
-                            {task.value}
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="empty-message">You have not created a task yet...</div>
-                )
-              ) : (
-                snapshot.finished.length > 0 ? (
-                  <div className="column padding-right-15">
-                    {snapshot.finished.map((task, i) => (
-                      <div key={task.id} className="row spacing-10 full-width">
-                        <div className="task-index">{i}|</div>
+                              <Col xs="auto">
+                                <Badge 
+                                  bg={
+                                    task.status === "Succeeded" ? "success" :
+                                    task.status === "Failed" ? "danger" :
+                                    "secondary"
+                                  }
+                                  style={{ minWidth: '80px' }}
+                                >
+                                  {task.status.toUpperCase()}
+                                </Badge>
+                              </Col>
 
-                        <div className={`status-label status-${task.status.toLowerCase()}`}>
-                          {task.status.toUpperCase()}
-                        </div>
-
-                        <div className="task-text">{task.value}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="empty-message">No finished tasks yet...</div>
-                )
-              )}
-            </div>
-          </div>
-        </div>
+                              <Col className="d-flex align-items-center">
+                                {task.value}
+                              </Col>
+                            </Row>
+                          </ListGroup.Item>
+                        ))}
+                      </ListGroup>
+                    ) : (
+                      <div className="text-muted fs-4 p-3">No finished tasks yet...</div>
+                    )
+                  )}
+              </Stack>
+            </Col>
+          </Row>
       );
     }
 
@@ -869,14 +915,16 @@ function App() {
   };
 
   return (
-    <main
-      className={`container ${expanded ? 'expanded' : 'collapsed'}`}
+    <Container fluid
+      style={{
+        height: "100vh",
+      }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onMouseMove={handleMouseEnter}
     >
       {renderAppContent()}
-    </main>
+    </Container>
   );
 }
 
