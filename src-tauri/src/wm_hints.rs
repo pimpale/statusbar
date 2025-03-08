@@ -122,4 +122,84 @@ impl WmHintsState {
             .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
         Ok(())
     }
+
+
+    fn atom_name(&self, atom: xcb::x::Atom) -> String {
+        let cookie = self.conn.send_request(&x::GetAtomName { atom });
+        let reply = self.conn.wait_for_reply(cookie).unwrap();
+        reply.name().to_string()
+    }
+
+    pub fn set_window_type(&self, window_type: WindowType) -> Result<(), WmHintsError> {
+        // Get the _NET_WM_WINDOW_TYPE atom
+        let wm_type_cookie = self.conn.send_request(&x::InternAtom {
+            only_if_exists: true,
+            name: "_NET_WM_WINDOW_TYPE".as_bytes(),
+        });
+        let wm_type_reply = self.conn
+            .wait_for_reply(wm_type_cookie)
+            .map_err(|x| WmHintsError::XcbError(x))?;
+        
+        println!("wm_type_reply: {:?}", wm_type_reply);
+        println!("wm_type_reply.atom(): {:?}", self.atom_name(wm_type_reply.atom()));
+        
+        
+        // Get the specific window type atom (e.g. _NET_WM_WINDOW_TYPE_DOCK)
+        let type_name = match window_type {
+            WindowType::Dock => "_NET_WM_WINDOW_TYPE_DOCK",
+            WindowType::Toolbar => "_NET_WM_WINDOW_TYPE_TOOLBAR",
+            WindowType::Menu => "_NET_WM_WINDOW_TYPE_MENU",
+            WindowType::Utility => "_NET_WM_WINDOW_TYPE_UTILITY",
+            WindowType::Splash => "_NET_WM_WINDOW_TYPE_SPLASH",
+            WindowType::Dialog => "_NET_WM_WINDOW_TYPE_DIALOG",
+            WindowType::DropdownMenu => "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
+            WindowType::PopupMenu => "_NET_WM_WINDOW_TYPE_POPUP_MENU",
+            WindowType::Tooltip => "_NET_WM_WINDOW_TYPE_TOOLTIP",
+            WindowType::Notification => "_NET_WM_WINDOW_TYPE_NOTIFICATION",
+            WindowType::Combo => "_NET_WM_WINDOW_TYPE_COMBO",
+            WindowType::Dnd => "_NET_WM_WINDOW_TYPE_DND",
+            WindowType::Normal => "_NET_WM_WINDOW_TYPE_NORMAL",
+        };
+        
+        let type_cookie = self.conn.send_request(&x::InternAtom {
+            only_if_exists: true,
+            name: type_name.as_bytes(),
+        });
+        let type_reply = self.conn
+            .wait_for_reply(type_cookie)
+            .map_err(|x| WmHintsError::XcbError(x))?;
+        
+        println!("type_reply: {:?}", type_reply);
+        println!("type_reply.atom(): {:?}", self.atom_name(type_reply.atom()));
+
+        // Set the window type property
+        self.conn
+            .send_and_check_request(&x::ChangeProperty {
+                mode: x::PropMode::Replace,
+                window: self.window,
+                property: wm_type_reply.atom(),
+                r#type: x::ATOM_ATOM,
+                data: &[type_reply.atom()],
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum WindowType {
+    Dock,
+    Toolbar,
+    Menu,
+    Utility,
+    Splash,
+    Dialog,
+    DropdownMenu,
+    PopupMenu,
+    Tooltip,
+    Notification,
+    Combo,
+    Dnd,
+    Normal,
 }

@@ -1,9 +1,8 @@
 use derivative::Derivative;
-use iced_wgpu::wgpu::rwh::{
-    HasDisplayHandle, RawDisplayHandle, RawWindowHandle, XcbDisplayHandle, XcbWindowHandle,
-    XlibDisplayHandle, XlibWindowHandle,
+use raw_window_handle::{
+    HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle, XcbDisplayHandle,
+    XcbWindowHandle, XlibDisplayHandle, XlibWindowHandle,
 };
-use iced_winit::winit;
 use xcb::{x, XidNew};
 
 #[derive(Derivative)]
@@ -52,10 +51,29 @@ impl std::error::Error for WmHintsError {
     }
 }
 
-pub fn create_state_mgr(window: &winit::window::Window) -> Result<WmHintsState, WmHintsError> {
-    let raw_window_handle = winit::raw_window_handle::HasWindowHandle::window_handle(&window)
-        .unwrap()
-        .as_raw();
+
+#[derive(Debug, Clone, Copy)]
+pub enum WindowType {
+    Dock,
+    Toolbar,
+    Menu,
+    Utility,
+    Splash,
+    Dialog,
+    DropdownMenu,
+    PopupMenu,
+    Tooltip,
+    Notification,
+    Combo,
+    Dnd,
+    Normal,
+}
+
+pub fn create_state_mgr<T>(window: &T) -> Result<WmHintsState, WmHintsError>
+where
+    T: HasWindowHandle + HasDisplayHandle,
+{
+    let raw_window_handle = window.window_handle().unwrap().as_raw();
     let raw_display_handle = window.display_handle().unwrap().as_raw();
 
     let (screen_id, conn) = match raw_display_handle {
@@ -93,31 +111,137 @@ pub fn create_state_mgr(window: &winit::window::Window) -> Result<WmHintsState, 
     })
 }
 
-pub fn grab_keyboard(data: &WmHintsState) -> Result<(), WmHintsError> {
-    let cookie = data.conn.send_request(&x::GrabKeyboard {
-        owner_events: false,
-        grab_window: data.window,
-        time: x::CURRENT_TIME,
-        keyboard_mode: x::GrabMode::Async,
-        pointer_mode: x::GrabMode::Async,
-    });
-    let reply = data
-        .conn
-        .wait_for_reply(cookie)
-        .map_err(|x| WmHintsError::XcbError(x))?;
+impl WmHintsState {
+    pub fn grab_keyboard(&self) -> Result<(), WmHintsError> {
+        let cookie = self.conn.send_request(&x::GrabKeyboard {
+            owner_events: false,
+            grab_window: self.window,
+            time: x::CURRENT_TIME,
+            keyboard_mode: x::GrabMode::Async,
+            pointer_mode: x::GrabMode::Async,
+        });
+        let reply = self
+            .conn
+            .wait_for_reply(cookie)
+            .map_err(|x| WmHintsError::XcbError(x))?;
 
-    // return based on reply status
-    match reply.status() {
-        x::GrabStatus::Success => Ok(()),
-        e => Err(WmHintsError::XcbGrabStatusError(e)),
+        // return based on reply status
+        match reply.status() {
+            x::GrabStatus::Success => Ok(()),
+            e => Err(WmHintsError::XcbGrabStatusError(e)),
+        }
+    }
+
+    pub fn ungrab_keyboard(&self) -> Result<(), WmHintsError> {
+        self.conn
+            .send_and_check_request(&x::UngrabKeyboard {
+                time: x::CURRENT_TIME,
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+        Ok(())
+    }
+
+    pub fn map_window(&self) -> Result<(), WmHintsError> {
+        self.conn
+            .send_and_check_request(&x::MapWindow {
+                window: self.window,
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+        Ok(())
+    }
+
+    pub fn unmap_window(&self) -> Result<(), WmHintsError> {
+        self.conn
+            .send_and_check_request(&x::UnmapWindow {
+                window: self.window,
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+        Ok(())
+    }
+
+    fn atom_name(&self, atom: xcb::x::Atom) -> String {
+        let cookie = self.conn.send_request(&x::GetAtomName { atom });
+        let reply = self.conn.wait_for_reply(cookie).unwrap();
+        reply.name().to_string()
+    }
+
+    fn set_window_type(&self, window_type: WindowType) -> Result<(), WmHintsError> {
+        // Get the _NET_WM_WINDOW_TYPE atom
+        let wm_type_cookie = self.conn.send_request(&x::InternAtom {
+            only_if_exists: true,
+            name: "_NET_WM_WINDOW_TYPE".as_bytes(),
+        });
+        let wm_type_reply = self.conn
+            .wait_for_reply(wm_type_cookie)
+            .map_err(|x| WmHintsError::XcbError(x))?;
+        
+        // Get the specific window type atom (e.g. _NET_WM_WINDOW_TYPE_DOCK)
+        let type_name = match window_type {
+            WindowType::Dock => "_NET_WM_WINDOW_TYPE_DOCK",
+            WindowType::Toolbar => "_NET_WM_WINDOW_TYPE_TOOLBAR",
+            WindowType::Menu => "_NET_WM_WINDOW_TYPE_MENU",
+            WindowType::Utility => "_NET_WM_WINDOW_TYPE_UTILITY",
+            WindowType::Splash => "_NET_WM_WINDOW_TYPE_SPLASH",
+            WindowType::Dialog => "_NET_WM_WINDOW_TYPE_DIALOG",
+            WindowType::DropdownMenu => "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
+            WindowType::PopupMenu => "_NET_WM_WINDOW_TYPE_POPUP_MENU",
+            WindowType::Tooltip => "_NET_WM_WINDOW_TYPE_TOOLTIP",
+            WindowType::Notification => "_NET_WM_WINDOW_TYPE_NOTIFICATION",
+            WindowType::Combo => "_NET_WM_WINDOW_TYPE_COMBO",
+            WindowType::Dnd => "_NET_WM_WINDOW_TYPE_DND",
+            WindowType::Normal => "_NET_WM_WINDOW_TYPE_NORMAL",
+        };
+        
+        let type_cookie = self.conn.send_request(&x::InternAtom {
+            only_if_exists: true,
+            name: type_name.as_bytes(),
+        });
+        let type_reply = self.conn
+            .wait_for_reply(type_cookie)
+            .map_err(|x| WmHintsError::XcbError(x))?;
+
+        // Set the window type property
+        self.conn
+            .send_and_check_request(&x::ChangeProperty {
+                mode: x::PropMode::Replace,
+                window: self.window,
+                property: wm_type_reply.atom(),
+                r#type: x::ATOM_ATOM,
+                data: &[type_reply.atom()],
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+
+        Ok(())
+    }
+
+    fn configure_window(&self, height: u32) -> Result<(), WmHintsError> {
+        use x::ConfigWindow;
+        let values = [ConfigWindow::Height(height)];
+
+        self.conn
+            .send_and_check_request(&x::ConfigureWindow {
+                window: self.window,
+                value_list: &values,
+            })
+            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
+        
+        Ok(())
+    }
+
+    pub fn dock_window(&self, height: u32) -> Result<(), WmHintsError> {
+        // First unmap the window
+        self.unmap_window()?;
+
+        // Configure the window height
+        self.configure_window(height)?;
+
+        // Set it as a dock window
+        self.set_window_type(WindowType::Dock)?;
+
+        // Finally remap the window
+        self.map_window()?;
+
+        Ok(())
     }
 }
 
-pub fn ungrab_keyboard(data: &WmHintsState) -> Result<(), WmHintsError> {
-    data.conn
-        .send_and_check_request(&x::UngrabKeyboard {
-            time: x::CURRENT_TIME,
-        })
-        .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
-    Ok(())
-}

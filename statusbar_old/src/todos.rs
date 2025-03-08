@@ -413,7 +413,7 @@ impl Program for Todos {
                 self.focused = true;
                 if self.expanded {
                     if !self.grabbed {
-                        match wm_hints::grab_keyboard(&self.wm_state).map_err(report_wmhints_error)
+                        match self.wm_state.grab_keyboard().map_err(report_wmhints_error)
                         {
                             Ok(_) => self.grabbed = true,
                             _ => {}
@@ -425,7 +425,7 @@ impl Program for Todos {
             Message::UnfocusDock => {
                 self.focused = false;
                 if self.grabbed {
-                    match wm_hints::ungrab_keyboard(&self.wm_state).map_err(report_wmhints_error) {
+                    match self.wm_state.ungrab_keyboard().map_err(report_wmhints_error) {
                         Ok(_) => self.grabbed = false,
                         _ => {}
                     }
@@ -434,10 +434,9 @@ impl Program for Todos {
             }
             Message::ExpandDock => {
                 self.expanded = true;
-
                 // grab keyboard focus
                 if self.focused {
-                    match wm_hints::grab_keyboard(&self.wm_state).map_err(report_wmhints_error) {
+                    match self.wm_state.grab_keyboard().map_err(report_wmhints_error) {
                         Ok(_) => self.grabbed = true,
                         _ => {}
                     }
@@ -457,7 +456,7 @@ impl Program for Todos {
             Message::CollapseDock => {
                 self.expanded = false;
                 if self.grabbed {
-                    match wm_hints::ungrab_keyboard(&self.wm_state).map_err(report_wmhints_error) {
+                    match self.wm_state.ungrab_keyboard().map_err(report_wmhints_error) {
                         Ok(_) => self.grabbed = false,
                         _ => {}
                     }

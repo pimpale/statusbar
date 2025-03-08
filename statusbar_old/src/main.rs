@@ -31,8 +31,6 @@ use signal_hook::iterator::Signals;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::EventLoopBuilder,
-    platform::x11::WindowBuilderExtX11,
-    platform::x11::XWindowType,
 };
 
 use todos::Todos;
@@ -62,8 +60,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let window = Arc::new(
         winit::window::WindowBuilder::new()
-            .with_x11_window_type(vec![XWindowType::Dock])
-            .with_inner_size(LogicalSize::new(1, 50))
+            .with_inner_size(LogicalSize::new(500, 50))
             .build(&event_loop)?,
     );
 
@@ -140,6 +137,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize scene and GUI controls
     let wm_state_mgr = wm_hints::create_state_mgr(window.clone().as_ref()).unwrap();
+    wm_state_mgr.dock_window(50).unwrap();
     // initialize app state
     let todos = Todos::new(window_id, wm_state_mgr, nocache, remote_url).unwrap();
 

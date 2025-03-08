@@ -96,6 +96,10 @@ function App() {
       setServerApiUrl(cache.serverApiUrl);
       setState({ type: "Restored", apiKey: cache.apiKey });
     }
+
+    // Set window type to dock
+    invoke('set_window_type', { windowType: 'dock' })
+      .catch(error => console.error('Failed to set window type:', error));
   }, []);
 
   // Update all the existing code to use setGrabbed instead of setGrabbed_raw
@@ -115,6 +119,7 @@ function App() {
 
   const expandDock = async () => {
     await setExpand(true);
+    await invoke('set_window_type', { windowType: 'dock' })
     if (focused && !grabbed) {
       await setGrabbed(true);
     }
