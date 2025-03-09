@@ -29,7 +29,7 @@ export interface TodosCache {
 
 // App state types
 export type AppState =
-  | { type: "NotLoggedIn"; email: string; password: string; viewPassword: boolean; error?: string }
+  | { type: "NotLoggedIn"; error?: string }
   | { type: "Restored"; apiKey: string }
   | { type: "NotConnected"; apiKey: string; error?: string }
   | {

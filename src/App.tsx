@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
-import { Button, Form, Container, Row, Col, Stack, Badge, ListGroup } from 'react-bootstrap';
+import { Button, Form, Container, Row, Col, Stack, Badge, ListGroup, InputGroup } from 'react-bootstrap';
 import {
   StateSnapshot,
   TaskStatus,
@@ -45,7 +45,7 @@ interface LoginScreenProps {
   expandDock: () => void;
   collapseDock: () => void;
   setState: (state: AppState) => void;
-  attemptLogin: () => void;
+  attemptLogin: (email: string, password: string) => void;
 }
 
 interface ConnectedScreenProps {
@@ -85,6 +85,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   setState,
   attemptLogin
 }) => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [viewPassword, setViewPassword] = useState(false);
+
   if (!expanded) {
     return (
       <Button variant="link" className="w-100 h-100" onClick={expandDock}>
@@ -98,9 +102,6 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
       <Col xs="auto">
         <Stack gap={2}>
           <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
-          <Button variant="secondary" onClick={() => setState({ ...state, viewPassword: !state.viewPassword })}>
-            {state.viewPassword ? "Hide Password" : "View Password"}
-          </Button>
         </Stack>
       </Col>
       <Col>
@@ -109,19 +110,33 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
             ref={emailInputRef}
             type="email"
             placeholder="Email"
-            value={state.email}
-            onChange={e => setState({ ...state, email: e.target.value, error: undefined })}
+            value={email}
+            onChange={e => {
+              setEmail(e.target.value);
+              setState({ ...state, error: undefined });
+            }}
             onKeyDown={e => e.key === "Enter" && passwordInputRef.current?.focus()}
           />
-          <Form.Control
-            ref={passwordInputRef}
-            type={state.viewPassword ? "text" : "password"}
-            placeholder="Password"
-            value={state.password}
-            onChange={e => setState({ ...state, password: e.target.value, error: undefined })}
-            onKeyDown={e => e.key === "Enter" && state.email && state.password ? attemptLogin() : null}
-          />
-          <Button variant="primary" onClick={attemptLogin}>Submit</Button>
+          <InputGroup>
+            <Form.Control
+              ref={passwordInputRef}
+              type={viewPassword ? "text" : "password"}
+              placeholder="Password"
+              value={password}
+              onChange={e => {
+                setPassword(e.target.value);
+                setState({ ...state, error: undefined });
+              }}
+              onKeyDown={e => e.key === "Enter" && email && password ? attemptLogin(email, password) : null}
+            />
+            <Button 
+              variant="outline-secondary"
+              onClick={() => setViewPassword(!viewPassword)}
+            >
+              <i className={viewPassword ? "bi bi-eye-slash-fill" : "bi bi-eye-fill"}></i>
+            </Button>
+          </InputGroup>
+          <Button variant="primary" onClick={() => attemptLogin(email, password)}>Submit</Button>
           {state.error && <div className="text-danger">{state.error}</div>}
         </Stack>
       </Col>
@@ -461,7 +476,7 @@ function App() {
   };
 
   // Handle login attempt
-  const attemptLogin = async () => {
+  const attemptLogin = async (email: string, password: string) => {
     if (state.type !== "NotLoggedIn") return;
 
     try {
@@ -483,8 +498,8 @@ function App() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          email: state.email,
-          password: state.password,
+          email: email,
+          password: password,
           // 7 days in milliseconds
           duration: 7 * 24 * 60 * 60 * 1000
         })
