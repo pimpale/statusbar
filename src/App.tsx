@@ -98,49 +98,45 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   }
 
   return (
-    <Row className="g-2">
-      <Col xs="auto">
-        <Stack gap={2}>
-          <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
-        </Stack>
-      </Col>
-      <Col>
-        <Stack gap={2}>
+    <div className="d-flex py-3 gap-2">
+      <Stack gap={2}>
+        <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
+      </Stack>
+      <Stack gap={2} className="flex-grow-1">
+        <Form.Control
+          ref={emailInputRef}
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={e => {
+            setEmail(e.target.value);
+            setState({ ...state, error: undefined });
+          }}
+          onKeyDown={e => e.key === "Enter" && passwordInputRef.current?.focus()}
+        />
+        <InputGroup>
           <Form.Control
-            ref={emailInputRef}
-            type="email"
-            placeholder="Email"
-            value={email}
+            ref={passwordInputRef}
+            type={viewPassword ? "text" : "password"}
+            placeholder="Password"
+            value={password}
             onChange={e => {
-              setEmail(e.target.value);
+              setPassword(e.target.value);
               setState({ ...state, error: undefined });
             }}
-            onKeyDown={e => e.key === "Enter" && passwordInputRef.current?.focus()}
+            onKeyDown={e => e.key === "Enter" && email && password ? attemptLogin(email, password) : null}
           />
-          <InputGroup>
-            <Form.Control
-              ref={passwordInputRef}
-              type={viewPassword ? "text" : "password"}
-              placeholder="Password"
-              value={password}
-              onChange={e => {
-                setPassword(e.target.value);
-                setState({ ...state, error: undefined });
-              }}
-              onKeyDown={e => e.key === "Enter" && email && password ? attemptLogin(email, password) : null}
-            />
-            <Button 
-              variant="outline-secondary"
-              onClick={() => setViewPassword(!viewPassword)}
-            >
-              <i className={viewPassword ? "bi bi-eye-slash-fill" : "bi bi-eye-fill"}></i>
-            </Button>
-          </InputGroup>
-          <Button variant="primary" onClick={() => attemptLogin(email, password)}>Submit</Button>
-          {state.error && <div className="text-danger">{state.error}</div>}
-        </Stack>
-      </Col>
-    </Row>
+          <Button
+            variant="outline-secondary"
+            onClick={() => setViewPassword(!viewPassword)}
+          >
+            <i className={viewPassword ? "bi bi-eye-slash-fill" : "bi bi-eye-fill"}></i>
+          </Button>
+        </InputGroup>
+        <Button variant="primary" onClick={() => attemptLogin(email, password)}>Submit</Button>
+        {state.error && <div className="text-danger">{state.error}</div>}
+      </Stack>
+    </div>
   );
 };
 
@@ -158,7 +154,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
   setActiveTask
 }) => {
   const { snapshot, showFinished, activeIdVal, inputValue } = state;
-  
+
   if (!expanded) {
     const liveTasks = snapshot.live;
 
@@ -173,33 +169,25 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
     // Show the first task
     const firstTask = liveTasks[0];
     return (
-      <Row className="g-2 h-100 align-items-center">
-        <Col xs="auto">
-          <Button variant="success" onClick={() => finishTask(firstTask.id, "Succeeded")}>
-            Succeeded
-          </Button>
-        </Col>
-        <Col>
-          <Button variant="link" className="w-100 text-start" onClick={expandDock}>
-            {firstTask.value}
-          </Button>
-        </Col>
-        <Col xs="auto">
-          <Button variant="danger" onClick={() => finishTask(firstTask.id, "Failed")}>
-            Failed
-          </Button>
-        </Col>
-        <Col xs="auto">
-          <Button variant="secondary" onClick={() => finishTask(firstTask.id, "Obsoleted")}>
-            Obsoleted
-          </Button>
-        </Col>
-      </Row>
+      <div className="d-flex gap-2 py-3 h-100">
+        <Button variant="success" className="h-100" onClick={() => finishTask(firstTask.id, "Succeeded")}>
+          Succeeded
+        </Button>
+        <Button variant="link" className="flex-grow-1 h-100 text-center" onClick={expandDock}>
+          {firstTask.value}
+        </Button>
+        <Button variant="danger" className="h-100" onClick={() => finishTask(firstTask.id, "Failed")}>
+          Failed
+        </Button>
+        <Button variant="secondary" className="h-100" onClick={() => finishTask(firstTask.id, "Obsoleted")}>
+          Obsoleted
+        </Button>
+      </div>
     );
   }
 
   return (
-    <Row className="g-2">
+    <Row className="g-2 py-3">
       <Col xs="auto">
         <Stack gap={2}>
           <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
@@ -222,59 +210,56 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
           {!showFinished ? (
             snapshot.live.length > 0 ? (
               <ListGroup>
-                {snapshot.live.map((task, i) => (
-                  <ListGroup.Item key={task.id} className="p-2">
-                    <Row className="g-2 align-items-center">
-                      <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
-                        {i}|
-                      </Col>
-
-                      {activeIdVal && activeIdVal[0] === task.id ? (
-                        <>
-                          <Col xs="auto">
-                            <Button variant="success" onClick={() => finishTask(task.id, "Succeeded")}>
-                              Task Succeeded
-                            </Button>
-                          </Col>
-
-                          <Col>
-                            <Form.Control
-                              ref={activeTaskInputRef}
-                              value={activeIdVal[1]}
-                              onChange={e => setState({
-                                ...state,
-                                activeIdVal: [activeIdVal[0], e.target.value]
-                              })}
-                              onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
-                            />
-                          </Col>
-
-                          <Col xs="auto">
-                            <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
-                              Task Failed
-                            </Button>
-                          </Col>
-
-                          <Col xs="auto">
-                            <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
-                              Task Obsoleted
-                            </Button>
-                          </Col>
-                        </>
-                      ) : (
-                        <Col>
-                          <Button
-                            variant="link"
-                            className="w-100 text-start p-0"
-                            onClick={() => setActiveTask(task.id)}
-                          >
-                            {task.value}
-                          </Button>
+                {snapshot.live.map((task, i) => {
+                  const isActive = activeIdVal && activeIdVal[0] === task.id;
+                  return (
+                    <ListGroup.Item key={task.id} className="p-2" onClick={isActive ? undefined : () => setActiveTask(task.id)}>
+                      <Row className="g-2 align-items-center">
+                        <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
+                          {i}|
                         </Col>
-                      )}
-                    </Row>
-                  </ListGroup.Item>
-                ))}
+
+                        {isActive ? (
+                          <>
+                            <Col xs="auto">
+                              <Button variant="success" onClick={() => finishTask(task.id, "Succeeded")}>
+                                Task Succeeded
+                              </Button>
+                            </Col>
+
+                            <Col>
+                              <Form.Control
+                                ref={activeTaskInputRef}
+                                value={activeIdVal[1]}
+                                onChange={e => setState({
+                                  ...state,
+                                  activeIdVal: [activeIdVal[0], e.target.value]
+                                })}
+                                onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
+                              />
+                            </Col>
+
+                            <Col xs="auto">
+                              <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
+                                Task Failed
+                              </Button>
+                            </Col>
+
+                            <Col xs="auto">
+                              <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
+                                Task Obsoleted
+                              </Button>
+                            </Col>
+                          </>
+                        ) : (
+                          <Col>
+                            {task.value}
+                          </Col>
+                        )}
+                      </Row>
+                    </ListGroup.Item>
+                  )
+                })}
               </ListGroup>
             ) : (
               <div className="text-muted fs-4 p-3">You have not created a task yet...</div>
@@ -290,11 +275,11 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                       </Col>
 
                       <Col xs="auto">
-                        <Badge 
+                        <Badge
                           bg={
                             task.status === "Succeeded" ? "success" :
-                            task.status === "Failed" ? "danger" :
-                            "secondary"
+                              task.status === "Failed" ? "danger" :
+                                "secondary"
                           }
                           style={{ minWidth: '80px' }}
                         >
@@ -324,9 +309,9 @@ const RestoredScreen: React.FC<RestoredScreenProps> = ({
   connectWebsocket
 }) => {
   return (
-    <Button 
-      variant="link" 
-      className="w-100 h-100" 
+    <Button
+      variant="link"
+      className="w-100 h-100"
       onClick={() => connectWebsocket(state.apiKey)}
     >
       Resume Session
@@ -353,8 +338,8 @@ const NotConnectedScreen: React.FC<NotConnectedScreenProps> = ({
       </Col>
       {state.error && expanded && (
         <Col xs="auto">
-          <Button 
-            variant="secondary" 
+          <Button
+            variant="secondary"
             onClick={() => connectWebsocket(state.apiKey)}
           >
             Retry

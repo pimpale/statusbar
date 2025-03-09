@@ -4,7 +4,7 @@ use tauri::{Manager, UserAttentionType};
 mod wm_hints;
 
 const WINDOW_WIDTH: f64 = 500.0;
-const WINDOW_HEIGHT: f64 = 50.0;
+const WINDOW_HEIGHT: f64 = 80.0;
 const WINDOW_HEIGHT_EXPANDED: f64 = 500.0;
 
 
