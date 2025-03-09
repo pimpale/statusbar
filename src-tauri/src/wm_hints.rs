@@ -42,7 +42,6 @@ impl std::error::Error for WmHintsError {
     }
 }
 
-
 #[derive(Debug, Clone, Copy)]
 pub enum WindowType {
     Dock,
@@ -96,10 +95,12 @@ where
     };
 
     let conn = unsafe { xcb::Connection::from_raw_conn(conn) };
-    
+
     // Get the root window
     let setup = conn.get_setup();
-    let screen = setup.roots().nth(screen_id as usize)
+    let screen = setup
+        .roots()
+        .nth(screen_id as usize)
         .ok_or(WmHintsError::ScreenNotFound)?;
     let root_window = screen.root();
 
@@ -112,22 +113,10 @@ where
 }
 
 impl WmHintsState {
-
-    pub fn focus_window(&self) -> Result<(), WmHintsError> {
+    pub fn focus_window(&self, state: bool) -> Result<(), WmHintsError> {
         self.conn
             .send_and_check_request(&x::SetInputFocus {
-                focus: self.window,
-                revert_to: x::InputFocus::PointerRoot,
-                time: x::CURRENT_TIME,
-            })
-            .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
-        Ok(())
-    }
-
-    pub fn unfocus_window(&self) -> Result<(), WmHintsError> {
-        self.conn
-            .send_and_check_request(&x::SetInputFocus {
-                focus: self.root_window,
+                focus: if state { self.window } else { self.root_window },
                 revert_to: x::InputFocus::PointerRoot,
                 time: x::CURRENT_TIME,
             })
@@ -165,10 +154,11 @@ impl WmHintsState {
             only_if_exists: true,
             name: "_NET_WM_WINDOW_TYPE".as_bytes(),
         });
-        let wm_type_reply = self.conn
+        let wm_type_reply = self
+            .conn
             .wait_for_reply(wm_type_cookie)
             .map_err(|x| WmHintsError::XcbError(x))?;
-        
+
         // Get the specific window type atom (e.g. _NET_WM_WINDOW_TYPE_DOCK)
         let type_name = match window_type {
             WindowType::Dock => "_NET_WM_WINDOW_TYPE_DOCK",
@@ -185,12 +175,13 @@ impl WmHintsState {
             WindowType::Dnd => "_NET_WM_WINDOW_TYPE_DND",
             WindowType::Normal => "_NET_WM_WINDOW_TYPE_NORMAL",
         };
-        
+
         let type_cookie = self.conn.send_request(&x::InternAtom {
             only_if_exists: true,
             name: type_name.as_bytes(),
         });
-        let type_reply = self.conn
+        let type_reply = self
+            .conn
             .wait_for_reply(type_cookie)
             .map_err(|x| WmHintsError::XcbError(x))?;
 
@@ -218,7 +209,7 @@ impl WmHintsState {
                 value_list: &values,
             })
             .map_err(|x| WmHintsError::XcbError(xcb::Error::Protocol(x)))?;
-        
+
         Ok(())
     }
 

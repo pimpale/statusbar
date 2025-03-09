@@ -173,9 +173,9 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
         <Button variant="success" className="h-100" onClick={() => finishTask(firstTask.id, "Succeeded")}>
           Succeeded
         </Button>
-        <Button variant="link" className="flex-grow-1 h-100 text-center" onClick={expandDock}>
+        <button className="btn flex-grow-1 h-100" onClick={expandDock}>
           {firstTask.value}
-        </Button>
+        </button>
         <Button variant="danger" className="h-100" onClick={() => finishTask(firstTask.id, "Failed")}>
           Failed
         </Button>
@@ -281,7 +281,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                               task.status === "Failed" ? "danger" :
                                 "secondary"
                           }
-                          style={{ minWidth: '80px' }}
+                          style={{ width: '6rem' }}
                         >
                           {task.status.toUpperCase()}
                         </Badge>
@@ -354,9 +354,6 @@ function App() {
   // Main app state
   const [state, setState] = useState<AppState>({
     type: "NotLoggedIn",
-    email: "",
-    password: "",
-    viewPassword: false
   });
 
   // UI state
@@ -377,12 +374,8 @@ function App() {
   // Create the new setWindowFocused function that handles the Tauri invoke
   const setWindowFocused = async (newState: boolean) => {
     try {
-      console.debug(`Attempting to ${newState ? 'focus' : 'unfocus'} window...`);
-      if (newState) {
-        await invoke('focus_window');
-      } else {
-        await invoke('unfocus_window');
-      }
+      console.debug(`Attempting to set window focus state to: ${newState}`);
+      await invoke('set_focus_state', { focused: newState });
       setWindowFocused_raw(newState);
     } catch (error) {
       console.error('Failed to change window focus state:', error);
@@ -392,12 +385,8 @@ function App() {
   // Create the new setExpand function that handles the Tauri invoke
   const setExpand = async (newState: boolean) => {
     try {
-      console.debug(`Attempting to ${newState ? 'expand' : 'unexpand'} window...`);
-      if (newState) {
-        await invoke('expand_window');
-      } else {
-        await invoke('unexpand_window');
-      }
+      console.debug(`Attempting to set window expand state to: ${newState}`);
+      await invoke('set_expand_state', { expanded: newState });
       setExpanded_raw(newState);
     } catch (error) {
       console.error('Failed to change window size:', error);
@@ -617,9 +606,6 @@ function App() {
           // If unauthorized or no cache (logged out), go back to login
           setState({
             type: "NotLoggedIn",
-            email: "",
-            password: "",
-            viewPassword: false,
             error
           });
         } else {
@@ -656,7 +642,7 @@ function App() {
     clearCache();
 
     // Reset state
-    setState({ type: "NotLoggedIn", email: "", password: "", viewPassword: false });
+    setState({ type: "NotLoggedIn" });
   };
 
   // Handle submitting a new task
