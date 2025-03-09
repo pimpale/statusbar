@@ -19,33 +19,47 @@ export const applyOperation = (snapshot: StateSnapshot, op: WebsocketOpKind): St
 
   if (op.InsLiveTask) {
     newSnapshot.live = [
-      { id: op.InsLiveTask.id, value: op.InsLiveTask.value },
+      { 
+        id: op.InsLiveTask.id, 
+        value: op.InsLiveTask.value,
+        deadline: op.InsLiveTask.deadline,
+        managed: null
+      },
       ...newSnapshot.live
     ];
     return newSnapshot;
   }
 
   if (op.RestoreFinishedTask) {
-    const finishedIndex = newSnapshot.finished.findIndex(task => task.id === op.RestoreFinishedTask!.id);
+    const id = op.RestoreFinishedTask.id;
+    const finishedIndex = newSnapshot.finished.findIndex(task => task.id === id);
     if (finishedIndex === -1) return snapshot;
 
     const task = newSnapshot.finished[finishedIndex];
-    newSnapshot.finished = newSnapshot.finished.filter(t => t.id !== op.RestoreFinishedTask!.id);
+    // remove the task from finished
+    newSnapshot.finished = newSnapshot.finished.filter(t => t.id !== id);
+    // add the task to live
     newSnapshot.live = [
-      { id: task.id, value: task.value },
+      { 
+        id: task.id, 
+        value: task.value,
+        deadline: task.deadline,
+        managed: task.managed
+      },
       ...newSnapshot.live
     ];
     return newSnapshot;
   }
 
-  if (op.EditLiveTask) {
+  if (op.EditLiveTask !== undefined) {
+    const elt = op.EditLiveTask;
     newSnapshot.live = newSnapshot.live.map(task =>
-      task.id === op.EditLiveTask!.id ? { ...task, value: op.EditLiveTask!.value } : task
+      task.id === elt.id ? { ...task, value: elt.value, deadline: elt.deadline } : task
     );
     return newSnapshot;
   }
 
-  if (op.DelLiveTask) {
+  if (op.DelLiveTask !== undefined) {
     newSnapshot.live = newSnapshot.live.filter(task => task.id !== op.DelLiveTask!.id);
     return newSnapshot;
   }
@@ -94,7 +108,13 @@ export const applyOperation = (snapshot: StateSnapshot, op: WebsocketOpKind): St
 
     newSnapshot.live = newSnapshot.live.filter(t => t.id !== op.FinishLiveTask!.id);
     newSnapshot.finished = [
-      { id: task.id, value: task.value, status: op.FinishLiveTask!.status },
+      {
+        id: task.id, 
+        value: task.value, 
+        status: op.FinishLiveTask!.status,
+        deadline: task.deadline,
+        managed: task.managed
+      },
       ...newSnapshot.finished
     ];
 

@@ -161,7 +161,16 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
   const { snapshot, showFinished, activeIdVal, inputValue } = state;
 
   const formatDeadline = (timestamp: number) => {
-    return format(fromUnixTime(timestamp), 'MMM d, yyyy');
+    const date = fromUnixTime(timestamp);
+    const today = new Date();
+    
+    // If the date is today, only show the time
+    if (format(date, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) {
+      return format(date, 'h:mm a');
+    }
+    
+    // Otherwise show both date and time
+    return format(date, 'MMM d, yyyy h:mm a');
   };
 
 
@@ -186,7 +195,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
         <button className="btn flex-grow-1 h-100" onClick={expandDock}>
           {firstTask.value}
           {firstTask.deadline && (
-            <Badge bg="info" className="ms-2">
+            <Badge bg="warning" className="ms-2">
               Due: {formatDeadline(firstTask.deadline)}
             </Badge>
           )}
@@ -243,7 +252,6 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                             </Col>
 
                             <Col>
-                              <Stack gap={2}>
                                 <Form.Control
                                   ref={activeTaskInputRef}
                                   value={activeIdVal[1]}
@@ -253,24 +261,36 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                                   })}
                                   onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
                                 />
-                                <DatePicker
-                                  selected={activeIdVal[2] ? fromUnixTime(activeIdVal[2]) : null}
-                                  onChange={(date: Date | null) => {
-                                    const deadline = date ? getUnixTime(date) : null;
-                                    setState({
-                                      ...state,
-                                      activeIdVal: [task.id, task.value, deadline]
-                                    });
-                                    editTask(task.id, task.value, deadline);
-                                  }}
-                                  dateFormat="MMM d, yyyy"
-                                  isClearable
-                                  placeholderText="Select a due date"
-                                  className="form-control"
-                                />
-                              </Stack>
                             </Col>
-
+                            <Col>
+                              <DatePicker
+                                showIcon
+                                selected={activeIdVal[2] !== null ? fromUnixTime(activeIdVal[2]) : null}
+                                onChange={(date: Date | null) => {
+                                  const deadline = date ? getUnixTime(date) : null;
+                                  setState({
+                                    ...state,
+                                    activeIdVal: [task.id, task.value, deadline]
+                                  });
+                                  editTask(task.id, task.value, deadline);
+                                }}
+                                onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
+                                showTimeSelect
+                                timeFormat="h:mm aa"
+                                timeIntervals={15}
+                                dateFormat="MMM d, yyyy h:mm aa"
+                                isClearable
+                                placeholderText="Select date and time"
+                                className="form-control"
+                                wrapperClassName="w-100"
+                                icon={<i className="bi bi-calendar" style={{ fontSize: '0.8rem' }}/>}
+                              />
+                            </Col>
+                            <Col xs="auto">
+                              <Button variant="dark" onClick={() => setActiveTask(undefined)}>
+                                Done
+                              </Button>
+                            </Col>
                             <Col xs="auto">
                               <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
                                 Task Failed
@@ -290,7 +310,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                             </Col>
                             {task.deadline !== null ? (
                               <Col>
-                                <Badge bg="info" className="ms-2">
+                                <Badge bg="warning" className="ms-2">
                                   Due: {formatDeadline(task.deadline)}
                                 </Badge>
                               </Col>
@@ -331,7 +351,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                       <Col className="d-flex align-items-center">
                         {task.value}
                         {task.deadline !== null && (
-                          <Badge bg="warn" className="ms-2">
+                          <Badge bg="warning" className="ms-2">
                             Due: {formatDeadline(task.deadline)}
                           </Badge>
                         )}
@@ -422,10 +442,11 @@ function App() {
     try {
       console.debug(`Attempting to set window focus state to: ${newState}`);
       await invoke('set_focus_state', { focused: newState });
-      setWindowFocused_raw(newState);
     } catch (error) {
       console.error('Failed to change window focus state:', error);
     }
+    setWindowFocused_raw(newState);
+
   };
 
   // Create the new setExpand function that handles the Tauri invoke
@@ -433,10 +454,10 @@ function App() {
     try {
       console.debug(`Attempting to set window expand state to: ${newState}`);
       await invoke('set_expand_state', { expanded: newState });
-      setExpanded_raw(newState);
     } catch (error) {
       console.error('Failed to change window size:', error);
     }
+    setExpanded_raw(newState);
   };
 
   // Load cached data on mount
@@ -846,7 +867,7 @@ function App() {
   };
 
   // Operations - Non-optimistic approach, waiting for server to respond
-  const addNewTask = (value: string) => {
+  const addNewTask = (value: string, deadline: number | null = null) => {
     if (state.type !== "Connected") return;
 
     const taskId = randomString();
@@ -856,7 +877,7 @@ function App() {
       InsLiveTask: {
         id: taskId,
         value,
-        deadline: null
+        deadline
       }
     })) {
       setState({
