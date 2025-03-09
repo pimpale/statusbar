@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import { Button, Form, Container, Row, Col, Stack, Badge, ListGroup, InputGroup } from 'react-bootstrap';
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
 import {
   StateSnapshot,
   TaskStatus,
@@ -27,6 +29,7 @@ import {
   loadCache,
   clearCache
 } from "./utils/storageUtils";
+import { format, fromUnixTime, getUnixTime } from 'date-fns';
 
 
 // Extend Window interface to store WebSocket
@@ -60,6 +63,7 @@ interface ConnectedScreenProps {
   submitTask: () => void;
   finishTask: (id: string, status: TaskStatus) => void;
   setActiveTask: (id?: string) => void;
+  editTask: (id: string, value: string, deadline: number | null) => void;
 }
 
 interface RestoredScreenProps {
@@ -151,9 +155,15 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
   logout,
   submitTask,
   finishTask,
-  setActiveTask
+  setActiveTask,
+  editTask
 }) => {
   const { snapshot, showFinished, activeIdVal, inputValue } = state;
+
+  const formatDeadline = (timestamp: number) => {
+    return format(fromUnixTime(timestamp), 'MMM d, yyyy');
+  };
+
 
   if (!expanded) {
     const liveTasks = snapshot.live;
@@ -175,6 +185,11 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
         </Button>
         <button className="btn flex-grow-1 h-100" onClick={expandDock}>
           {firstTask.value}
+          {firstTask.deadline && (
+            <Badge bg="info" className="ms-2">
+              Due: {formatDeadline(firstTask.deadline)}
+            </Badge>
+          )}
         </button>
         <Button variant="danger" className="h-100" onClick={() => finishTask(firstTask.id, "Failed")}>
           Failed
@@ -228,15 +243,32 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                             </Col>
 
                             <Col>
-                              <Form.Control
-                                ref={activeTaskInputRef}
-                                value={activeIdVal[1]}
-                                onChange={e => setState({
-                                  ...state,
-                                  activeIdVal: [activeIdVal[0], e.target.value]
-                                })}
-                                onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
-                              />
+                              <Stack gap={2}>
+                                <Form.Control
+                                  ref={activeTaskInputRef}
+                                  value={activeIdVal[1]}
+                                  onChange={e => setState({
+                                    ...state,
+                                    activeIdVal: [activeIdVal[0], e.target.value, activeIdVal[2]]
+                                  })}
+                                  onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
+                                />
+                                <DatePicker
+                                  selected={activeIdVal[2] ? fromUnixTime(activeIdVal[2]) : null}
+                                  onChange={(date: Date | null) => {
+                                    const deadline = date ? getUnixTime(date) : null;
+                                    setState({
+                                      ...state,
+                                      activeIdVal: [task.id, task.value, deadline]
+                                    });
+                                    editTask(task.id, task.value, deadline);
+                                  }}
+                                  dateFormat="MMM d, yyyy"
+                                  isClearable
+                                  placeholderText="Select a due date"
+                                  className="form-control"
+                                />
+                              </Stack>
                             </Col>
 
                             <Col xs="auto">
@@ -252,9 +284,18 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                             </Col>
                           </>
                         ) : (
-                          <Col>
-                            {task.value}
-                          </Col>
+                          <>
+                            <Col>
+                              {task.value}
+                            </Col>
+                            {task.deadline !== null ? (
+                              <Col>
+                                <Badge bg="info" className="ms-2">
+                                  Due: {formatDeadline(task.deadline)}
+                                </Badge>
+                              </Col>
+                            ) : null}
+                          </>
                         )}
                       </Row>
                     </ListGroup.Item>
@@ -289,6 +330,11 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
 
                       <Col className="d-flex align-items-center">
                         {task.value}
+                        {task.deadline !== null && (
+                          <Badge bg="warn" className="ms-2">
+                            Due: {formatDeadline(task.deadline)}
+                          </Badge>
+                        )}
                       </Col>
                     </Row>
                   </ListGroup.Item>
@@ -353,7 +399,7 @@ const NotConnectedScreen: React.FC<NotConnectedScreenProps> = ({
 function App() {
   // Main app state
   const [state, setState] = useState<AppState>({
-    type: "NotLoggedIn",
+    type: "NotLoggedIn"
   });
 
   // UI state
@@ -544,6 +590,7 @@ function App() {
           type: "Connected",
           apiKey,
           inputValue: "",
+          activeIdVal: undefined,
           snapshot: {
             live: [],
             finished: []
@@ -664,7 +711,8 @@ function App() {
         setState({
           ...state,
           showFinished: !state.showFinished,
-          inputValue: ""
+          inputValue: "",
+          activeIdVal: undefined
         });
         return;
 
@@ -674,7 +722,8 @@ function App() {
           finishTask(task.id, "Succeeded");
           setState({
             ...state,
-            inputValue: ""
+            inputValue: "",
+            activeIdVal: undefined
           });
         }
         return;
@@ -685,7 +734,8 @@ function App() {
           finishTask(task.id, "Failed");
           setState({
             ...state,
-            inputValue: ""
+            inputValue: "",
+            activeIdVal: undefined
           });
         }
         return;
@@ -696,7 +746,8 @@ function App() {
           finishTask(task.id, "Obsoleted");
           setState({
             ...state,
-            inputValue: ""
+            inputValue: "",
+            activeIdVal: undefined
           });
         }
         return;
@@ -707,7 +758,8 @@ function App() {
           restoreFinishedTask(state.snapshot.finished[restoreIndex].id);
           setState({
             ...state,
-            inputValue: ""
+            inputValue: "",
+            activeIdVal: undefined
           });
         }
         return;
@@ -723,7 +775,8 @@ function App() {
           );
           setState({
             ...state,
-            inputValue: ""
+            inputValue: "",
+            activeIdVal: undefined
           });
         }
         return;
@@ -739,7 +792,8 @@ function App() {
             moveTask(state.snapshot.live[fromIndex].id, state.snapshot.live[toIndex].id);
             setState({
               ...state,
-              inputValue: ""
+              inputValue: "",
+              activeIdVal: undefined
             });
           }
         }
@@ -756,7 +810,8 @@ function App() {
             reverseTask(state.snapshot.live[fromIndex].id, state.snapshot.live[toIndex].id);
             setState({
               ...state,
-              inputValue: ""
+              inputValue: "",
+              activeIdVal: undefined
             });
           }
         }
@@ -800,7 +855,8 @@ function App() {
     if (sendWsOp({
       InsLiveTask: {
         id: taskId,
-        value
+        value,
+        deadline: null
       }
     })) {
       setState({
@@ -835,18 +891,6 @@ function App() {
     // State will be updated when server responds
   };
 
-  const editTask = (id: string, value: string) => {
-    if (state.type !== "Connected") return;
-
-    // Just send to server and wait for response
-    sendWsOp({
-      EditLiveTask: {
-        id,
-        value
-      }
-    });
-  };
-
   const moveTask = (fromId: string, toId: string) => {
     if (state.type !== "Connected") return;
 
@@ -869,13 +913,26 @@ function App() {
     });
   };
 
+  const editTask = (id: string, value: string, deadline: number | null) => {
+    if (state.type !== "Connected") return;
+
+    sendWsOp({
+      EditLiveTask: {
+        id,
+        value,
+        deadline
+      }
+    });
+  };
+
   const setActiveTask = (id?: string) => {
     if (state.type !== "Connected") return;
 
     // If there was an active task being edited, save it first
     if (state.activeIdVal) {
+      const [activeId, activeValue, activeDeadline] = state.activeIdVal;
       // Send the changes to the server
-      editTask(state.activeIdVal[0], state.activeIdVal[1]);
+      editTask(activeId, activeValue, activeDeadline);
     }
 
     if (!id) {
@@ -897,7 +954,7 @@ function App() {
     // Just update local editing state, no server interaction needed here
     setState({
       ...state,
-      activeIdVal: [id, task.value]
+      activeIdVal: [task.id, task.value, task.deadline]
     });
 
     setTimeout(() => {
@@ -935,6 +992,7 @@ function App() {
           submitTask={submitTask}
           finishTask={finishTask}
           setActiveTask={setActiveTask}
+          editTask={editTask}
         />
       );
     }

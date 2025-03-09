@@ -6,7 +6,9 @@ export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
 export const LiveTaskSchema = z.object({
     id: z.string(),
-    value: z.string()
+    value: z.string(),
+    deadline: z.number().nullable(),
+    managed: z.string().nullable()
 });
 export type LiveTask = z.infer<typeof LiveTaskSchema>;
 
@@ -36,7 +38,7 @@ export type AppState =
       type: "Connected";
       apiKey: string;
       inputValue: string;
-      activeIdVal?: [string, string];
+      activeIdVal?: [id: string, value: string, deadline: number | null];
       snapshot: StateSnapshot;
       showFinished: boolean;
       sessionId: string;
@@ -47,14 +49,16 @@ export const WebsocketOpKindSchema = z.object({
     OverwriteState: StateSnapshotSchema.optional(),
     InsLiveTask: z.object({
         id: z.string(),
-        value: z.string()
+        value: z.string(),
+        deadline: z.number().nullable()
     }).optional(),
     RestoreFinishedTask: z.object({
         id: z.string()
     }).optional(),
     EditLiveTask: z.object({
         id: z.string(),
-        value: z.string()
+        value: z.string(),
+        deadline: z.number().nullable()
     }).optional(),
     DelLiveTask: z.object({
         id: z.string()
