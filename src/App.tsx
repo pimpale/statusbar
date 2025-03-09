@@ -28,12 +28,327 @@ import {
   clearCache
 } from "./utils/storageUtils";
 
+
 // Extend Window interface to store WebSocket
 declare global {
   interface Window {
     todoWebSocket?: WebSocket;
   }
 }
+
+// Add interfaces at the top of the file
+interface LoginScreenProps {
+  state: Extract<AppState, { type: "NotLoggedIn" }>;
+  expanded: boolean;
+  emailInputRef: React.RefObject<HTMLInputElement>;
+  passwordInputRef: React.RefObject<HTMLInputElement>;
+  expandDock: () => void;
+  collapseDock: () => void;
+  setState: (state: AppState) => void;
+  attemptLogin: () => void;
+}
+
+interface ConnectedScreenProps {
+  state: Extract<AppState, { type: "Connected" }>;
+  expanded: boolean;
+  taskInputRef: React.RefObject<HTMLInputElement>;
+  activeTaskInputRef: React.RefObject<HTMLInputElement>;
+  expandDock: () => void;
+  collapseDock: () => void;
+  setState: (state: AppState) => void;
+  logout: () => void;
+  submitTask: () => void;
+  finishTask: (id: string, status: TaskStatus) => void;
+  setActiveTask: (id?: string) => void;
+}
+
+interface RestoredScreenProps {
+  state: Extract<AppState, { type: "Restored" }>;
+  connectWebsocket: (apiKey: string) => void;
+}
+
+interface NotConnectedScreenProps {
+  state: Extract<AppState, { type: "NotConnected" }>;
+  expanded: boolean;
+  expandDock: () => void;
+  connectWebsocket: (apiKey: string) => void;
+}
+
+// Add component definitions before App function
+const LoginScreen: React.FC<LoginScreenProps> = ({
+  state,
+  expanded,
+  emailInputRef,
+  passwordInputRef,
+  expandDock,
+  collapseDock,
+  setState,
+  attemptLogin
+}) => {
+  if (!expanded) {
+    return (
+      <Button variant="link" className="w-100 h-100" onClick={expandDock}>
+        Click to Log In
+      </Button>
+    );
+  }
+
+  return (
+    <Row className="g-2">
+      <Col xs="auto">
+        <Stack gap={2}>
+          <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
+          <Button variant="secondary" onClick={() => setState({ ...state, viewPassword: !state.viewPassword })}>
+            {state.viewPassword ? "Hide Password" : "View Password"}
+          </Button>
+        </Stack>
+      </Col>
+      <Col>
+        <Stack gap={2}>
+          <Form.Control
+            ref={emailInputRef}
+            type="email"
+            placeholder="Email"
+            value={state.email}
+            onChange={e => setState({ ...state, email: e.target.value, error: undefined })}
+            onKeyDown={e => e.key === "Enter" && passwordInputRef.current?.focus()}
+          />
+          <Form.Control
+            ref={passwordInputRef}
+            type={state.viewPassword ? "text" : "password"}
+            placeholder="Password"
+            value={state.password}
+            onChange={e => setState({ ...state, password: e.target.value, error: undefined })}
+            onKeyDown={e => e.key === "Enter" && state.email && state.password ? attemptLogin() : null}
+          />
+          <Button variant="primary" onClick={attemptLogin}>Submit</Button>
+          {state.error && <div className="text-danger">{state.error}</div>}
+        </Stack>
+      </Col>
+    </Row>
+  );
+};
+
+const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
+  state,
+  expanded,
+  taskInputRef,
+  activeTaskInputRef,
+  expandDock,
+  collapseDock,
+  setState,
+  logout,
+  submitTask,
+  finishTask,
+  setActiveTask
+}) => {
+  const { snapshot, showFinished, activeIdVal, inputValue } = state;
+  
+  if (!expanded) {
+    const liveTasks = snapshot.live;
+
+    if (liveTasks.length === 0) {
+      return (
+        <Button variant="link" className="w-100" onClick={expandDock}>
+          Click to Add Task
+        </Button>
+      );
+    }
+
+    // Show the first task
+    const firstTask = liveTasks[0];
+    return (
+      <Row className="g-2 h-100 align-items-center">
+        <Col xs="auto">
+          <Button variant="success" onClick={() => finishTask(firstTask.id, "Succeeded")}>
+            Succeeded
+          </Button>
+        </Col>
+        <Col>
+          <Button variant="link" className="w-100 text-start" onClick={expandDock}>
+            {firstTask.value}
+          </Button>
+        </Col>
+        <Col xs="auto">
+          <Button variant="danger" onClick={() => finishTask(firstTask.id, "Failed")}>
+            Failed
+          </Button>
+        </Col>
+        <Col xs="auto">
+          <Button variant="secondary" onClick={() => finishTask(firstTask.id, "Obsoleted")}>
+            Obsoleted
+          </Button>
+        </Col>
+      </Row>
+    );
+  }
+
+  return (
+    <Row className="g-2">
+      <Col xs="auto">
+        <Stack gap={2}>
+          <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
+          <Button variant="secondary" onClick={() => setState({ ...state, showFinished: !showFinished })}>
+            {showFinished ? "Show Live Tasks" : "Show Finished Tasks"}
+          </Button>
+          <Button variant="secondary" onClick={logout}>Log Out</Button>
+        </Stack>
+      </Col>
+      <Col>
+        <Stack gap={2}>
+          <Form.Control
+            ref={taskInputRef}
+            placeholder="What needs to be done?"
+            value={inputValue}
+            onChange={e => setState({ ...state, inputValue: e.target.value })}
+            onKeyDown={e => e.key === "Enter" && submitTask()}
+            onFocus={() => setActiveTask(undefined)}
+          />
+          {!showFinished ? (
+            snapshot.live.length > 0 ? (
+              <ListGroup>
+                {snapshot.live.map((task, i) => (
+                  <ListGroup.Item key={task.id} className="p-2">
+                    <Row className="g-2 align-items-center">
+                      <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
+                        {i}|
+                      </Col>
+
+                      {activeIdVal && activeIdVal[0] === task.id ? (
+                        <>
+                          <Col xs="auto">
+                            <Button variant="success" onClick={() => finishTask(task.id, "Succeeded")}>
+                              Task Succeeded
+                            </Button>
+                          </Col>
+
+                          <Col>
+                            <Form.Control
+                              ref={activeTaskInputRef}
+                              value={activeIdVal[1]}
+                              onChange={e => setState({
+                                ...state,
+                                activeIdVal: [activeIdVal[0], e.target.value]
+                              })}
+                              onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
+                            />
+                          </Col>
+
+                          <Col xs="auto">
+                            <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
+                              Task Failed
+                            </Button>
+                          </Col>
+
+                          <Col xs="auto">
+                            <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
+                              Task Obsoleted
+                            </Button>
+                          </Col>
+                        </>
+                      ) : (
+                        <Col>
+                          <Button
+                            variant="link"
+                            className="w-100 text-start p-0"
+                            onClick={() => setActiveTask(task.id)}
+                          >
+                            {task.value}
+                          </Button>
+                        </Col>
+                      )}
+                    </Row>
+                  </ListGroup.Item>
+                ))}
+              </ListGroup>
+            ) : (
+              <div className="text-muted fs-4 p-3">You have not created a task yet...</div>
+            )
+          ) : (
+            snapshot.finished.length > 0 ? (
+              <ListGroup>
+                {snapshot.finished.map((task, i) => (
+                  <ListGroup.Item key={task.id} className="p-2">
+                    <Row className="g-2 align-items-center">
+                      <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
+                        {i}|
+                      </Col>
+
+                      <Col xs="auto">
+                        <Badge 
+                          bg={
+                            task.status === "Succeeded" ? "success" :
+                            task.status === "Failed" ? "danger" :
+                            "secondary"
+                          }
+                          style={{ minWidth: '80px' }}
+                        >
+                          {task.status.toUpperCase()}
+                        </Badge>
+                      </Col>
+
+                      <Col className="d-flex align-items-center">
+                        {task.value}
+                      </Col>
+                    </Row>
+                  </ListGroup.Item>
+                ))}
+              </ListGroup>
+            ) : (
+              <div className="text-muted fs-4 p-3">No finished tasks yet...</div>
+            )
+          )}
+        </Stack>
+      </Col>
+    </Row>
+  );
+};
+
+const RestoredScreen: React.FC<RestoredScreenProps> = ({
+  state,
+  connectWebsocket
+}) => {
+  return (
+    <Button 
+      variant="link" 
+      className="w-100 h-100" 
+      onClick={() => connectWebsocket(state.apiKey)}
+    >
+      Resume Session
+    </Button>
+  );
+};
+
+const NotConnectedScreen: React.FC<NotConnectedScreenProps> = ({
+  state,
+  expanded,
+  expandDock,
+  connectWebsocket
+}) => {
+  return (
+    <Row className="g-2">
+      <Col>
+        <Button variant="link" className="w-100 h-100" onClick={expandDock}>
+          {state.error ? (
+            <span className="text-danger">{state.error}</span>
+          ) : (
+            "Connecting..."
+          )}
+        </Button>
+      </Col>
+      {state.error && expanded && (
+        <Col xs="auto">
+          <Button 
+            variant="secondary" 
+            onClick={() => connectWebsocket(state.apiKey)}
+          >
+            Retry
+          </Button>
+        </Col>
+      )}
+    </Row>
+  );
+};
 
 function App() {
   // Main app state
@@ -604,314 +919,59 @@ function App() {
     }, 0);
   };
 
-  // Render different states
-  const renderAppContent = () => {
-    // Not logged in, collapsed
-    if (state.type === "NotLoggedIn" && !expanded) {
+  const renderContent = () => {
+    if (state.type === "NotLoggedIn") {
       return (
-        <Button
-          variant="link"
-          className="w-100 h-100"
-          onClick={expandDock}
-        >
-          Click to Log In
-        </Button>
+        <LoginScreen
+          state={state}
+          expanded={expanded}
+          emailInputRef={emailInputRef}
+          passwordInputRef={passwordInputRef}
+          expandDock={expandDock}
+          collapseDock={collapseDock}
+          setState={setState}
+          attemptLogin={attemptLogin}
+        />
       );
     }
 
-    // Not logged in, expanded
-    if (state.type === "NotLoggedIn" && expanded) {
+    if (state.type === "Connected") {
       return (
-          <Row className="g-2">
-            <Col xs="auto">
-              <Stack gap={2}>
-                <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
-                <Button variant="secondary" onClick={() => setState({ ...state, viewPassword: !state.viewPassword })}>
-                  {state.viewPassword ? "Hide Password" : "View Password"}
-                </Button>
-              </Stack>
-            </Col>
-            <Col>
-              <Stack gap={2}>
-                <Form.Control
-                  ref={emailInputRef}
-                  type="email"
-                  placeholder="Email"
-                  value={state.email}
-                  onChange={e => setState({ ...state, email: e.target.value, error: undefined })}
-                  onKeyDown={e => e.key === "Enter" && passwordInputRef.current?.focus()}
-                />
-                <Form.Control
-                  ref={passwordInputRef}
-                  type={state.viewPassword ? "text" : "password"}
-                  placeholder="Password"
-                  value={state.password}
-                  onChange={e => setState({ ...state, password: e.target.value, error: undefined })}
-                  onKeyDown={e => e.key === "Enter" && state.email && state.password ? attemptLogin() : null}
-                />
-                <Button variant="primary" onClick={attemptLogin}>Submit</Button>
-                {state.error && <div className="text-danger">{state.error}</div>}
-              </Stack>
-            </Col>
-          </Row>
+        <ConnectedScreen
+          state={state}
+          expanded={expanded}
+          taskInputRef={taskInputRef}
+          activeTaskInputRef={activeTaskInputRef}
+          expandDock={expandDock}
+          collapseDock={collapseDock}
+          setState={setState}
+          logout={logout}
+          submitTask={submitTask}
+          finishTask={finishTask}
+          setActiveTask={setActiveTask}
+        />
       );
     }
 
-    // Restored cache
     if (state.type === "Restored") {
       return (
-        <Button
-          variant="link"
-          className="w-100 h-100"
-          onClick={() => connectWebsocket(state.apiKey)}
-        >
-          Resume Session
-        </Button>
+        <RestoredScreen
+          state={state}
+          connectWebsocket={connectWebsocket}
+        />
       );
     }
 
-    // Not connected, collapsed
-    if (state.type === "NotConnected" && !expanded) {
+    if (state.type === "NotConnected") {
       return (
-          <Row className="g-2">
-            <Col>
-              <Button
-                variant="link"
-                className="w-100 h-100"
-                onClick={expandDock}
-              >
-                {state.error ?
-                  <span className="text-danger">{state.error}</span> :
-                  "Connecting..."}
-              </Button>
-            </Col>
-            {state.error && (
-              <Col xs="auto">
-                <Button variant="secondary" onClick={() => connectWebsocket(state.apiKey)}>
-                  Retry
-                </Button>
-              </Col>
-            )}
-          </Row>
+        <NotConnectedScreen
+          state={state}
+          expanded={expanded}
+          expandDock={expandDock}
+          connectWebsocket={connectWebsocket}
+        />
       );
     }
-
-    // Not connected, expanded
-    if (state.type === "NotConnected" && expanded) {
-      return (
-          <Row className="g-2">
-            <Col xs="auto">
-              <Stack gap={2}>
-                <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
-                <Button variant="secondary" onClick={logout}>Log Out</Button>
-              </Stack>
-            </Col>
-            <Col>
-              <Stack gap={2}>
-                {state.error ? (
-                  <>
-                    <div className="text-danger">{state.error}</div>
-                    <Button variant="primary" onClick={() => connectWebsocket(state.apiKey)}>Retry</Button>
-                  </>
-                ) : (
-                  <div>Connecting...</div>
-                )}
-              </Stack>
-            </Col>
-          </Row>
-      );
-    }
-
-    // Connected, collapsed
-    if (state.type === "Connected" && !expanded) {
-      const liveTasks = state.snapshot.live;
-
-      if (liveTasks.length === 0) {
-        return (
-            <Button variant="link" className="w-100" onClick={expandDock}>Click to Add Task</Button>
-        );
-      }
-
-      // Show the first task
-      const firstTask = liveTasks[0];
-      return (
-          <Row className="g-2 h-100 align-items-center">
-            <Col xs="auto">
-              <Button
-                variant="success"
-                onClick={() => finishTask(firstTask.id, "Succeeded")}
-              >
-                Succeeded
-              </Button>
-            </Col>
-
-            <Col>
-              <Button
-                variant="link"
-                className="w-100 text-start"
-                onClick={expandDock}
-              >
-                {firstTask.value}
-              </Button>
-            </Col>
-
-            <Col xs="auto">
-              <Button
-                variant="danger"
-                onClick={() => finishTask(firstTask.id, "Failed")}
-              >
-                Failed
-              </Button>
-            </Col>
-
-            <Col xs="auto">
-              <Button
-                variant="secondary"
-                onClick={() => finishTask(firstTask.id, "Obsoleted")}
-              >
-                Obsoleted
-              </Button>
-            </Col>
-          </Row>
-      );
-    }
-
-    // Connected, expanded
-    if (state.type === "Connected" && expanded) {
-      const { snapshot, showFinished, activeIdVal, inputValue } = state;
-
-      return (
-          <Row className="g-2">
-            <Col xs="auto">
-              <Stack gap={2}>
-                <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
-                <Button variant="secondary" onClick={() => setState({ ...state, showFinished: !showFinished })}>
-                  {showFinished ? "Show Live Tasks" : "Show Finished Tasks"}
-                </Button>
-                <Button variant="secondary" onClick={logout}>Log Out</Button>
-              </Stack>
-            </Col>
-
-            <Col>
-              <Stack gap={2}>
-                <Form.Control
-                  ref={taskInputRef}
-                  placeholder="What needs to be done?"
-                  value={inputValue}
-                  onChange={e => setState({ ...state, inputValue: e.target.value })}
-                  onKeyDown={e => e.key === "Enter" && submitTask()}
-                  onFocus={() => setActiveTask(undefined)}
-                />
-                  {!showFinished ? (
-                    snapshot.live.length > 0 ? (
-                      <ListGroup>
-                        {snapshot.live.map((task, i) => (
-                          <ListGroup.Item key={task.id} className="p-2">
-                            <Row className="g-2 align-items-center">
-                              <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
-                                {i}|
-                              </Col>
-
-                              {activeIdVal && activeIdVal[0] === task.id ? (
-                                <>
-                                  <Col xs="auto">
-                                    <Button
-                                      variant="success"
-                                      onClick={() => finishTask(task.id, "Succeeded")}
-                                    >
-                                      Task Succeeded
-                                    </Button>
-                                  </Col>
-
-                                  <Col>
-                                    <Form.Control
-                                      ref={activeTaskInputRef}
-                                      value={activeIdVal[1]}
-                                      onChange={e => setState({
-                                        ...state,
-                                        activeIdVal: [activeIdVal[0], e.target.value]
-                                      })}
-                                      onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
-                                    />
-                                  </Col>
-
-                                  <Col xs="auto">
-                                    <Button
-                                      variant="danger"
-                                      onClick={() => finishTask(task.id, "Failed")}
-                                    >
-                                      Task Failed
-                                    </Button>
-                                  </Col>
-
-                                  <Col xs="auto">
-                                    <Button
-                                      variant="secondary"
-                                      onClick={() => finishTask(task.id, "Obsoleted")}
-                                    >
-                                      Task Obsoleted
-                                    </Button>
-                                  </Col>
-                                </>
-                              ) : (
-                                <Col>
-                                  <Button
-                                    variant="link"
-                                    className="w-100 text-start p-0"
-                                    onClick={() => setActiveTask(task.id)}
-                                  >
-                                    {task.value}
-                                  </Button>
-                                </Col>
-                              )}
-                            </Row>
-                          </ListGroup.Item>
-                        ))}
-                      </ListGroup>
-                    ) : (
-                      <div className="text-muted fs-4 p-3">You have not created a task yet...</div>
-                    )
-                  ) : (
-                    snapshot.finished.length > 0 ? (
-                      <ListGroup>
-                        {snapshot.finished.map((task, i) => (
-                          <ListGroup.Item key={task.id} className="p-2">
-                            <Row className="g-2 align-items-center">
-                              <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
-                                {i}|
-                              </Col>
-
-                              <Col xs="auto">
-                                <Badge 
-                                  bg={
-                                    task.status === "Succeeded" ? "success" :
-                                    task.status === "Failed" ? "danger" :
-                                    "secondary"
-                                  }
-                                  style={{ minWidth: '80px' }}
-                                >
-                                  {task.status.toUpperCase()}
-                                </Badge>
-                              </Col>
-
-                              <Col className="d-flex align-items-center">
-                                {task.value}
-                              </Col>
-                            </Row>
-                          </ListGroup.Item>
-                        ))}
-                      </ListGroup>
-                    ) : (
-                      <div className="text-muted fs-4 p-3">No finished tasks yet...</div>
-                    )
-                  )}
-              </Stack>
-            </Col>
-          </Row>
-      );
-    }
-
-    return <div>Unknown state</div>;
   };
 
   return (
@@ -923,7 +983,7 @@ function App() {
       onMouseLeave={handleMouseLeave}
       onMouseMove={handleMouseEnter}
     >
-      {renderAppContent()}
+      {renderContent()}
     </Container>
   );
 }
