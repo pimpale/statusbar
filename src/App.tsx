@@ -78,6 +78,52 @@ interface NotConnectedScreenProps {
   connectWebsocket: (apiKey: string) => void;
 }
 
+interface DeadlineBadgeProps {
+  deadline: number | null;
+}
+
+const DeadlineBadge: React.FC<DeadlineBadgeProps> = ({ deadline }) => {
+  if (deadline === null) return null;
+
+  const formatDeadline = (timestamp: number) => {
+    const date = fromUnixTime(timestamp);
+    const today = new Date();
+    
+    // If the date is today, only show the time
+    if (format(date, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) {
+      return format(date, 'h:mm a');
+    }
+    
+    // Otherwise show both date and time
+    return format(date, 'MMM d, yyyy h:mm a');
+  };
+
+  const getBadgeVariant = (timestamp: number) => {
+    const date = fromUnixTime(timestamp);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // If the deadline is in the past
+    if (date < now) {
+      return "danger";  // red
+    }
+    
+    // If the deadline is today
+    if (format(date, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) {
+      return "warning";  // yellow
+    }
+    
+    // If the deadline is in the future
+    return "success";  // green
+  };
+
+  return (
+    <Badge bg={getBadgeVariant(deadline)} className="ms-2">
+      Due: {formatDeadline(deadline)}
+    </Badge>
+  );
+};
+
 // Add component definitions before App function
 const LoginScreen: React.FC<LoginScreenProps> = ({
   state,
@@ -160,20 +206,6 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
 }) => {
   const { snapshot, showFinished, activeIdVal, inputValue } = state;
 
-  const formatDeadline = (timestamp: number) => {
-    const date = fromUnixTime(timestamp);
-    const today = new Date();
-    
-    // If the date is today, only show the time
-    if (format(date, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) {
-      return format(date, 'h:mm a');
-    }
-    
-    // Otherwise show both date and time
-    return format(date, 'MMM d, yyyy h:mm a');
-  };
-
-
   if (!expanded) {
     const liveTasks = snapshot.live;
 
@@ -194,11 +226,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
         </Button>
         <button className="btn flex-grow-1 h-100" onClick={expandDock}>
           {firstTask.value}
-          {firstTask.deadline && (
-            <Badge bg="warning" className="ms-2">
-              Due: {formatDeadline(firstTask.deadline)}
-            </Badge>
-          )}
+          <DeadlineBadge deadline={firstTask.deadline} />
         </button>
         <Button variant="danger" className="h-100" onClick={() => finishTask(firstTask.id, "Failed")}>
           Failed
@@ -279,6 +307,17 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                                 timeFormat="h:mm aa"
                                 timeIntervals={15}
                                 dateFormat="MMM d, yyyy h:mm aa"
+                                minDate={new Date()}
+                                filterTime={(time) => {
+                                  const selected = new Date(time);
+                                  const now = new Date();
+                                  // If it's today, only allow future times
+                                  if (format(selected, 'yyyy-MM-dd') === format(now, 'yyyy-MM-dd')) {
+                                    return selected > now;
+                                  }
+                                  // For future dates, allow all times
+                                  return true;
+                                }}
                                 isClearable
                                 placeholderText="Select date and time"
                                 className="form-control"
@@ -308,13 +347,9 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                             <Col>
                               {task.value}
                             </Col>
-                            {task.deadline !== null ? (
-                              <Col>
-                                <Badge bg="warning" className="ms-2">
-                                  Due: {formatDeadline(task.deadline)}
-                                </Badge>
-                              </Col>
-                            ) : null}
+                            <Col>
+                              <DeadlineBadge deadline={task.deadline} />
+                            </Col>
                           </>
                         )}
                       </Row>
@@ -350,11 +385,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
 
                       <Col className="d-flex align-items-center">
                         {task.value}
-                        {task.deadline !== null && (
-                          <Badge bg="warning" className="ms-2">
-                            Due: {formatDeadline(task.deadline)}
-                          </Badge>
-                        )}
+                        <DeadlineBadge deadline={task.deadline} />
                       </Col>
                     </Row>
                   </ListGroup.Item>
