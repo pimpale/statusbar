@@ -59,6 +59,28 @@ pub enum WindowType {
     Normal,
 }
 
+
+impl WindowType {
+    pub fn get_type_name(&self) -> &str {
+        match self {
+            WindowType::Dock => "_NET_WM_WINDOW_TYPE_DOCK",
+            WindowType::Toolbar => "_NET_WM_WINDOW_TYPE_TOOLBAR",
+            WindowType::Menu => "_NET_WM_WINDOW_TYPE_MENU",
+            WindowType::Utility => "_NET_WM_WINDOW_TYPE_UTILITY",
+            WindowType::Splash => "_NET_WM_WINDOW_TYPE_SPLASH",
+            WindowType::Dialog => "_NET_WM_WINDOW_TYPE_DIALOG",
+            WindowType::DropdownMenu => "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
+            WindowType::PopupMenu => "_NET_WM_WINDOW_TYPE_POPUP_MENU",
+            WindowType::Tooltip => "_NET_WM_WINDOW_TYPE_TOOLTIP",
+            WindowType::Notification => "_NET_WM_WINDOW_TYPE_NOTIFICATION",
+            WindowType::Combo => "_NET_WM_WINDOW_TYPE_COMBO",
+            WindowType::Dnd => "_NET_WM_WINDOW_TYPE_DND",
+            WindowType::Normal => "_NET_WM_WINDOW_TYPE_NORMAL",
+        }
+    }
+}
+
+
 pub fn create_state_mgr<T>(window: &T) -> Result<WmHintsState, WmHintsError>
 where
     T: HasWindowHandle + HasDisplayHandle,
@@ -159,27 +181,12 @@ impl WmHintsState {
             .wait_for_reply(wm_type_cookie)
             .map_err(|x| WmHintsError::XcbError(x))?;
 
-        // Get the specific window type atom (e.g. _NET_WM_WINDOW_TYPE_DOCK)
-        let type_name = match window_type {
-            WindowType::Dock => "_NET_WM_WINDOW_TYPE_DOCK",
-            WindowType::Toolbar => "_NET_WM_WINDOW_TYPE_TOOLBAR",
-            WindowType::Menu => "_NET_WM_WINDOW_TYPE_MENU",
-            WindowType::Utility => "_NET_WM_WINDOW_TYPE_UTILITY",
-            WindowType::Splash => "_NET_WM_WINDOW_TYPE_SPLASH",
-            WindowType::Dialog => "_NET_WM_WINDOW_TYPE_DIALOG",
-            WindowType::DropdownMenu => "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
-            WindowType::PopupMenu => "_NET_WM_WINDOW_TYPE_POPUP_MENU",
-            WindowType::Tooltip => "_NET_WM_WINDOW_TYPE_TOOLTIP",
-            WindowType::Notification => "_NET_WM_WINDOW_TYPE_NOTIFICATION",
-            WindowType::Combo => "_NET_WM_WINDOW_TYPE_COMBO",
-            WindowType::Dnd => "_NET_WM_WINDOW_TYPE_DND",
-            WindowType::Normal => "_NET_WM_WINDOW_TYPE_NORMAL",
-        };
 
         let type_cookie = self.conn.send_request(&x::InternAtom {
             only_if_exists: true,
-            name: type_name.as_bytes(),
+            name: window_type.get_type_name().as_bytes(),
         });
+        
         let type_reply = self
             .conn
             .wait_for_reply(type_cookie)
