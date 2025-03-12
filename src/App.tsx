@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
-import { Button, Form, Container, Row, Col, Stack, Badge, ListGroup, InputGroup } from 'react-bootstrap';
+import { Button, Form, Container, Row, Col, Stack, Badge, ListGroup, InputGroup, Tabs, Tab } from 'react-bootstrap';
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import {
@@ -13,7 +13,8 @@ import {
   ServerInfoSchema,
   ServerInfo,
   AppState,
-  TodosCache
+  TodosCache,
+  ViewType
 } from "./types";
 import {
   applyOperation,
@@ -110,6 +111,23 @@ interface FinishedTasksScreenProps {
   }>;
 }
 
+interface LiveTasksScreenProps {
+  tasks: Array<{
+    id: string;
+    value: string;
+    deadline: number | null;
+    managed: string | null;
+  }>;
+  activeIdVal?: [string, string, number | null];
+  taskInputRef: React.RefObject<HTMLInputElement>;
+  activeTaskInputRef: React.RefObject<HTMLInputElement>;
+  setActiveTask: (id?: string) => void;
+  editTask: (id: string, value: string, deadline: number | null) => void;
+  finishTask: (id: string, status: TaskStatus) => void;
+  state: Extract<AppState, { type: "Connected" }>;
+  setState: (state: AppState) => void;
+}
+
 const DeadlineBadge: React.FC<DeadlineBadgeProps> = ({ deadline, countdown = false, className = "" }) => {
   const [currentTime, setCurrentTime] = useState(Date.now() / 1000);
 
@@ -128,7 +146,7 @@ const DeadlineBadge: React.FC<DeadlineBadgeProps> = ({ deadline, countdown = fal
   const formatDeadline = (timestamp: number) => {
     const date = fromUnixTime(timestamp);
     const today = new Date();
-    
+
     if (countdown) {
       const diffSeconds = Math.floor(timestamp - currentTime);
       if (diffSeconds < 0) {
@@ -155,12 +173,12 @@ const DeadlineBadge: React.FC<DeadlineBadgeProps> = ({ deadline, countdown = fal
         return `${secondsPadded}s left`;
       }
     }
-    
+
     // If the date is today, only show the time
     if (format(date, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) {
       return format(date, 'h:mm a');
     }
-    
+
     // Otherwise show both date and time
     return format(date, 'MMM d, yyyy h:mm a');
   };
@@ -169,22 +187,22 @@ const DeadlineBadge: React.FC<DeadlineBadgeProps> = ({ deadline, countdown = fal
     const date = fromUnixTime(timestamp);
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
+
     // If the deadline is in the past
     if (date < now) {
       return "danger";  // red
     }
-    
+
     // If the deadline is today
     if (format(date, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) {
       return "warning";  // yellow
     }
-    
+
     // If the deadline is in the future
     return "success";  // green
   };
 
- return (
+  return (
     <Badge bg={getBadgeVariant(deadline)} className={className}>
       {countdown ? <pre children={formatDeadline(deadline)} className="m-0" /> : formatDeadline(deadline)}
     </Badge>
@@ -323,7 +341,7 @@ const OverdueTasksScreen: React.FC<OverdueTasksScreenProps> = ({
                       placeholderText="Select date and time"
                       className="form-control"
                       wrapperClassName="w-100"
-                      icon={<i className="bi bi-calendar" style={{ fontSize: '0.8rem' }}/>}
+                      icon={<i className="bi bi-calendar" style={{ fontSize: '0.8rem' }} />}
                     />
                   </Col>
                   <Col xs="auto">
@@ -364,6 +382,131 @@ const OverdueTasksScreen: React.FC<OverdueTasksScreenProps> = ({
                     <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
                       Obsoleted
                     </Button>
+                  </Col>
+                </>
+              )}
+            </Row>
+          </ListGroup.Item>
+        );
+      })}
+    </ListGroup>
+  );
+};
+
+const LiveTasksScreen: React.FC<LiveTasksScreenProps> = ({
+  tasks,
+  activeIdVal,
+  taskInputRef,
+  activeTaskInputRef,
+  setActiveTask,
+  editTask,
+  finishTask,
+  state,
+  setState
+}) => {
+  if (tasks.length === 0) {
+    return <div className="text-muted fs-4 p-3">You have not created a task yet...</div>;
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (activeIdVal) {
+      const newState: Extract<AppState, { type: "Connected" }> = {
+        ...state,
+        activeIdVal: [activeIdVal[0], e.target.value, activeIdVal[2]]
+      };
+      setState(newState);
+    }
+  };
+
+  const handleDateChange = (date: Date | null, task: { id: string; value: string }) => {
+    const deadline = date ? getUnixTime(date) : null;
+    const newState: Extract<AppState, { type: "Connected" }> = {
+      ...state,
+      activeIdVal: [task.id, task.value, deadline]
+    };
+    setState(newState);
+    editTask(task.id, task.value, deadline);
+  };
+
+  return (
+    <ListGroup>
+      {tasks.map((task, i) => {
+        const isActive = activeIdVal && activeIdVal[0] === task.id;
+        return (
+          <ListGroup.Item key={task.id} className="p-2" onClick={isActive ? undefined : () => setActiveTask(task.id)}>
+            <Row className="g-2 align-items-center">
+              <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
+                {i}|
+              </Col>
+
+              {isActive ? (
+                <>
+                  <Col xs="auto">
+                    <Button variant="success" onClick={() => finishTask(task.id, "Succeeded")}>
+                      Task Succeeded
+                    </Button>
+                  </Col>
+
+                  <Col>
+                    <Form.Control
+                      ref={activeTaskInputRef}
+                      value={activeIdVal[1]}
+                      onChange={handleInputChange}
+                      onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
+                    />
+                  </Col>
+                  <Col>
+                    <DatePicker
+                      showIcon
+                      selected={activeIdVal[2] !== null ? fromUnixTime(activeIdVal[2]) : null}
+                      onChange={(date: Date | null) => handleDateChange(date, task)}
+                      onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
+                      showTimeSelect
+                      timeFormat="h:mm aa"
+                      timeIntervals={15}
+                      dateFormat="MMM d, yyyy h:mm aa"
+                      minDate={new Date()}
+                      filterTime={(time) => {
+                        const selected = new Date(time);
+                        const now = new Date();
+                        // If it's today, only allow future times
+                        if (format(selected, 'yyyy-MM-dd') === format(now, 'yyyy-MM-dd')) {
+                          return selected > now;
+                        }
+                        // For future dates, allow all times
+                        return true;
+                      }}
+                      isClearable
+                      placeholderText="Select date and time"
+                      className="form-control"
+                      wrapperClassName="w-100"
+                      icon={<i className="bi bi-calendar" style={{ fontSize: '0.8rem' }} />}
+                    />
+                  </Col>
+                  <Col xs="auto">
+                    <Button variant="dark" onClick={() => setActiveTask(undefined)}>
+                      Done
+                    </Button>
+                  </Col>
+                  <Col xs="auto">
+                    <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
+                      Task Failed
+                    </Button>
+                  </Col>
+
+                  <Col xs="auto">
+                    <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
+                      Task Obsoleted
+                    </Button>
+                  </Col>
+                </>
+              ) : (
+                <>
+                  <Col>
+                    {task.value}
+                  </Col>
+                  <Col>
+                    <DeadlineBadge deadline={task.deadline} />
                   </Col>
                 </>
               )}
@@ -429,8 +572,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
   setActiveTask,
   editTask
 }) => {
-  const { snapshot, showFinished, activeIdVal, inputValue } = state;
-  const [showOverdueTasks, setShowOverdueTasks] = useState(false);
+  const { snapshot, viewType, activeIdVal, inputValue } = state;
 
   // Get overdue tasks
   const overdueTasks = snapshot.live.filter(task => {
@@ -475,158 +617,55 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
       <Col xs="auto">
         <Stack gap={2}>
           <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
-          <Button 
-            variant="secondary" 
-            onClick={() => {
-              if (showOverdueTasks) {
-                setShowOverdueTasks(false);
-              } else if (showFinished) {
-                setState({ ...state, showFinished: false });
-                setShowOverdueTasks(true);
-              } else {
-                setShowOverdueTasks(true);
-              }
-            }}
-          >
-            {showOverdueTasks ? "Show Live Tasks" : overdueTasks.length > 0 ? `Show Overdue Tasks (${overdueTasks.length})` : "Show Live Tasks"}
-          </Button>
-          {!showOverdueTasks && (
-            <Button 
-              variant="secondary" 
-              onClick={() => setState({ ...state, showFinished: !showFinished })}
-            >
-              {showFinished ? "Show Live Tasks" : "Show Finished Tasks"}
-            </Button>
-          )}
           <Button variant="secondary" onClick={logout}>Log Out</Button>
         </Stack>
       </Col>
       <Col>
         <Stack gap={2}>
-          {!showOverdueTasks && !showFinished && (
-            <Form.Control
-              ref={taskInputRef}
-              placeholder="What needs to be done?"
-              value={inputValue}
-              onChange={e => setState({ ...state, inputValue: e.target.value })}
-              onKeyDown={e => e.key === "Enter" && submitTask()}
-              onFocus={() => setActiveTask(undefined)}
-            />
-          )}
-          {showOverdueTasks ? (
-            <OverdueTasksScreen
-              tasks={overdueTasks}
-              activeIdVal={activeIdVal}
-              taskInputRef={taskInputRef}
-              activeTaskInputRef={activeTaskInputRef}
-              setActiveTask={setActiveTask}
-              editTask={editTask}
-              finishTask={finishTask}
-            />
-          ) : !showFinished ? (
-            snapshot.live.length > 0 ? (
-              <ListGroup>
-                {snapshot.live.map((task, i) => {
-                  const isActive = activeIdVal && activeIdVal[0] === task.id;
-                  return (
-                    <ListGroup.Item key={task.id} className="p-2" onClick={isActive ? undefined : () => setActiveTask(task.id)}>
-                      <Row className="g-2 align-items-center">
-                        <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
-                          {i}|
-                        </Col>
-
-                        {isActive ? (
-                          <>
-                            <Col xs="auto">
-                              <Button variant="success" onClick={() => finishTask(task.id, "Succeeded")}>
-                                Task Succeeded
-                              </Button>
-                            </Col>
-
-                            <Col>
-                                <Form.Control
-                                  ref={activeTaskInputRef}
-                                  value={activeIdVal[1]}
-                                  onChange={e => setState({
-                                    ...state,
-                                    activeIdVal: [activeIdVal[0], e.target.value, activeIdVal[2]]
-                                  })}
-                                  onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
-                                />
-                            </Col>
-                            <Col>
-                              <DatePicker
-                                showIcon
-                                selected={activeIdVal[2] !== null ? fromUnixTime(activeIdVal[2]) : null}
-                                onChange={(date: Date | null) => {
-                                  const deadline = date ? getUnixTime(date) : null;
-                                  setState({
-                                    ...state,
-                                    activeIdVal: [task.id, task.value, deadline]
-                                  });
-                                  editTask(task.id, task.value, deadline);
-                                }}
-                                onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
-                                showTimeSelect
-                                timeFormat="h:mm aa"
-                                timeIntervals={15}
-                                dateFormat="MMM d, yyyy h:mm aa"
-                                minDate={new Date()}
-                                filterTime={(time) => {
-                                  const selected = new Date(time);
-                                  const now = new Date();
-                                  // If it's today, only allow future times
-                                  if (format(selected, 'yyyy-MM-dd') === format(now, 'yyyy-MM-dd')) {
-                                    return selected > now;
-                                  }
-                                  // For future dates, allow all times
-                                  return true;
-                                }}
-                                isClearable
-                                placeholderText="Select date and time"
-                                className="form-control"
-                                wrapperClassName="w-100"
-                                icon={<i className="bi bi-calendar" style={{ fontSize: '0.8rem' }}/>}
-                              />
-                            </Col>
-                            <Col xs="auto">
-                              <Button variant="dark" onClick={() => setActiveTask(undefined)}>
-                                Done
-                              </Button>
-                            </Col>
-                            <Col xs="auto">
-                              <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
-                                Task Failed
-                              </Button>
-                            </Col>
-
-                            <Col xs="auto">
-                              <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
-                                Task Obsoleted
-                              </Button>
-                            </Col>
-                          </>
-                        ) : (
-                          <>
-                            <Col>
-                              {task.value}
-                            </Col>
-                            <Col>
-                              <DeadlineBadge deadline={task.deadline} />
-                            </Col>
-                          </>
-                        )}
-                      </Row>
-                    </ListGroup.Item>
-                  );
-                })}
-              </ListGroup>
-            ) : (
-              <div className="text-muted fs-4 p-3">You have not created a task yet...</div>
-            )
-          ) : (
-            <FinishedTasksScreen tasks={snapshot.finished} />
-          )}
+          <Tabs
+            activeKey={viewType}
+            onSelect={(k) => {
+              if (k === ViewType.Live || k === ViewType.Overdue || k === ViewType.Finished) {
+                setState({ ...state, viewType: k });
+              }
+            }}
+          >
+            <Tab eventKey={ViewType.Live} title="Live Tasks">
+              <Form.Control
+                ref={taskInputRef}
+                placeholder="What needs to be done?"
+                value={inputValue}
+                onChange={e => setState({ ...state, inputValue: e.target.value })}
+                onKeyDown={e => e.key === "Enter" && submitTask()}
+                onFocus={() => setActiveTask(undefined)}
+              />
+              <LiveTasksScreen
+                tasks={snapshot.live}
+                activeIdVal={activeIdVal}
+                taskInputRef={taskInputRef}
+                activeTaskInputRef={activeTaskInputRef}
+                setActiveTask={setActiveTask}
+                editTask={editTask}
+                finishTask={finishTask}
+                state={state}
+                setState={setState}
+              />
+            </Tab>
+            <Tab eventKey={ViewType.Overdue} title={`Overdue Tasks (${overdueTasks.length})`}>
+              <OverdueTasksScreen
+                tasks={overdueTasks}
+                activeIdVal={activeIdVal}
+                taskInputRef={taskInputRef}
+                activeTaskInputRef={activeTaskInputRef}
+                setActiveTask={setActiveTask}
+                editTask={editTask}
+                finishTask={finishTask}
+              />
+            </Tab>
+            <Tab eventKey={ViewType.Finished} title="Finished Tasks">
+              <FinishedTasksScreen tasks={snapshot.finished} />
+            </Tab>
+          </Tabs>
         </Stack>
       </Col>
     </Row>
@@ -809,7 +848,8 @@ function App() {
       setState({
         ...state,
         inputValue: "",
-        activeIdVal: undefined
+        activeIdVal: undefined,
+        viewType: ViewType.Live
       });
     }
   };
@@ -914,7 +954,7 @@ function App() {
             live: [],
             finished: []
           },
-          showFinished: false,
+          viewType: ViewType.Live,
           sessionId,
         });
 
@@ -1029,7 +1069,7 @@ function App() {
       case "t": // toggle finished
         setState({
           ...state,
-          showFinished: !state.showFinished,
+          viewType: state.viewType === ViewType.Finished ? ViewType.Live : ViewType.Finished,
           inputValue: "",
           activeIdVal: undefined
         });

@@ -29,6 +29,13 @@ export interface TodosCache {
   apiKey: string;
 }
 
+// View type enum
+export enum ViewType {
+  Live = "live",
+  Finished = "finished",
+  Overdue = "overdue"
+}
+
 // App state types
 export type AppState =
   | { type: "NotLoggedIn"; error?: string }
@@ -40,7 +47,7 @@ export type AppState =
       inputValue: string;
       activeIdVal?: [id: string, value: string, deadline: number | null];
       snapshot: StateSnapshot;
-      showFinished: boolean;
+      viewType: ViewType;
       sessionId: string;
     };
 
