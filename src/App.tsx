@@ -14,7 +14,9 @@ import {
   ServerInfo,
   AppState,
   TodosCache,
-  ViewType
+  ViewType,
+  LiveTask,
+  FinishedTask
 } from "./types";
 import {
   applyOperation,
@@ -87,32 +89,16 @@ interface DeadlineBadgeProps {
 }
 
 interface OverdueTasksScreenProps {
-  tasks: Array<{
-    id: string;
-    value: string;
-    deadline: number | null;
-    managed: string | null;
-  }>;
+  tasks: LiveTask[];
   finishTask: (id: string, status: TaskStatus) => void;
 }
 
 interface FinishedTasksScreenProps {
-  tasks: Array<{
-    id: string;
-    value: string;
-    deadline: number | null;
-    managed: string | null;
-    status: TaskStatus;
-  }>;
+  tasks: FinishedTask[];
 }
 
 interface LiveTasksScreenProps {
-  tasks: Array<{
-    id: string;
-    value: string;
-    deadline: number | null;
-    managed: string | null;
-  }>;
+  tasks: LiveTask[];
   activeIdVal?: [string, string, number | null];
   taskInputRef: React.RefObject<HTMLInputElement>;
   activeTaskInputRef: React.RefObject<HTMLInputElement>;
@@ -395,7 +381,7 @@ const LiveTasksScreen: React.FC<LiveTasksScreenProps> = ({
     }
   };
 
-  const handleDateChange = (date: Date | null, task: { id: string; value: string }) => {
+  const handleDateChange = (date: Date | null, task: LiveTask) => {
     const deadline = date ? getUnixTime(date) : null;
     const newState: Extract<AppState, { type: "Connected" }> = {
       ...state,
@@ -552,7 +538,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
   const { snapshot, viewType, activeIdVal, inputValue } = state;
 
   // Get overdue tasks
-  const overdueTasks = snapshot.live.filter(task => {
+  const overdueTasks: LiveTask[] = snapshot.live.filter(task => {
     if (!task.deadline) return false;
     return (Date.now() / 1000) > task.deadline;
   });
