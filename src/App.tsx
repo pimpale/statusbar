@@ -85,6 +85,31 @@ interface DeadlineBadgeProps {
   className?: string;
 }
 
+interface OverdueTasksScreenProps {
+  tasks: Array<{
+    id: string;
+    value: string;
+    deadline: number | null;
+    managed: string | null;
+  }>;
+  activeIdVal?: [string, string, number | null];
+  taskInputRef: React.RefObject<HTMLInputElement>;
+  activeTaskInputRef: React.RefObject<HTMLInputElement>;
+  setActiveTask: (id?: string) => void;
+  editTask: (id: string, value: string, deadline: number | null) => void;
+  finishTask: (id: string, status: TaskStatus) => void;
+}
+
+interface FinishedTasksScreenProps {
+  tasks: Array<{
+    id: string;
+    value: string;
+    deadline: number | null;
+    managed: string | null;
+    status: TaskStatus;
+  }>;
+}
+
 const DeadlineBadge: React.FC<DeadlineBadgeProps> = ({ deadline, countdown = false, className = "" }) => {
   const [currentTime, setCurrentTime] = useState(Date.now() / 1000);
 
@@ -232,6 +257,164 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   );
 };
 
+const OverdueTasksScreen: React.FC<OverdueTasksScreenProps> = ({
+  tasks,
+  activeIdVal,
+  taskInputRef,
+  activeTaskInputRef,
+  setActiveTask,
+  editTask,
+  finishTask
+}) => {
+  if (tasks.length === 0) {
+    return <div className="text-muted fs-4 p-3">No overdue tasks</div>;
+  }
+
+  return (
+    <ListGroup>
+      {tasks.map((task, i) => {
+        const isActive = activeIdVal && activeIdVal[0] === task.id;
+        return (
+          <ListGroup.Item key={task.id} className="p-2" onClick={isActive ? undefined : () => setActiveTask(task.id)}>
+            <Row className="g-2 align-items-center">
+              <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
+                {i}|
+              </Col>
+
+              {isActive ? (
+                <>
+                  <Col xs="auto">
+                    <Button variant="success" onClick={() => finishTask(task.id, "Succeeded")}>
+                      Task Succeeded
+                    </Button>
+                  </Col>
+
+                  <Col>
+                    <Form.Control
+                      ref={activeTaskInputRef}
+                      value={activeIdVal[1]}
+                      onChange={e => setActiveTask(task.id)}
+                      onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
+                    />
+                  </Col>
+                  <Col>
+                    <DatePicker
+                      showIcon
+                      selected={activeIdVal[2] !== null ? fromUnixTime(activeIdVal[2]) : null}
+                      onChange={(date: Date | null) => {
+                        const deadline = date ? getUnixTime(date) : null;
+                        editTask(task.id, task.value, deadline);
+                      }}
+                      onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
+                      showTimeSelect
+                      timeFormat="h:mm aa"
+                      timeIntervals={15}
+                      dateFormat="MMM d, yyyy h:mm aa"
+                      minDate={new Date()}
+                      filterTime={(time) => {
+                        const selected = new Date(time);
+                        const now = new Date();
+                        if (format(selected, 'yyyy-MM-dd') === format(now, 'yyyy-MM-dd')) {
+                          return selected > now;
+                        }
+                        return true;
+                      }}
+                      isClearable
+                      placeholderText="Select date and time"
+                      className="form-control"
+                      wrapperClassName="w-100"
+                      icon={<i className="bi bi-calendar" style={{ fontSize: '0.8rem' }}/>}
+                    />
+                  </Col>
+                  <Col xs="auto">
+                    <Button variant="dark" onClick={() => setActiveTask(undefined)}>
+                      Done
+                    </Button>
+                  </Col>
+                  <Col xs="auto">
+                    <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
+                      Task Failed
+                    </Button>
+                  </Col>
+                  <Col xs="auto">
+                    <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
+                      Task Obsoleted
+                    </Button>
+                  </Col>
+                </>
+              ) : (
+                <>
+                  <Col>
+                    {task.value}
+                  </Col>
+                  <Col>
+                    <DeadlineBadge deadline={task.deadline} countdown={true} />
+                  </Col>
+                  <Col xs="auto">
+                    <Button variant="success" onClick={() => finishTask(task.id, "Succeeded")}>
+                      Succeeded
+                    </Button>
+                  </Col>
+                  <Col xs="auto">
+                    <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
+                      Failed
+                    </Button>
+                  </Col>
+                  <Col xs="auto">
+                    <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
+                      Obsoleted
+                    </Button>
+                  </Col>
+                </>
+              )}
+            </Row>
+          </ListGroup.Item>
+        );
+      })}
+    </ListGroup>
+  );
+};
+
+const FinishedTasksScreen: React.FC<FinishedTasksScreenProps> = ({
+  tasks
+}) => {
+  if (tasks.length === 0) {
+    return <div className="text-muted fs-4 p-3">No finished tasks yet...</div>;
+  }
+
+  return (
+    <ListGroup>
+      {tasks.map((task, i) => (
+        <ListGroup.Item key={task.id} className="p-2">
+          <Row className="g-2 align-items-center">
+            <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
+              {i}|
+            </Col>
+
+            <Col xs="auto">
+              <Badge
+                bg={
+                  task.status === "Succeeded" ? "success" :
+                    task.status === "Failed" ? "danger" :
+                      "secondary"
+                }
+                style={{ width: '6rem' }}
+              >
+                {task.status.toUpperCase()}
+              </Badge>
+            </Col>
+
+            <Col className="d-flex align-items-center">
+              {task.value}
+              <DeadlineBadge deadline={task.deadline} />
+            </Col>
+          </Row>
+        </ListGroup.Item>
+      ))}
+    </ListGroup>
+  );
+};
+
 const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
   state,
   expanded,
@@ -247,6 +430,13 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
   editTask
 }) => {
   const { snapshot, showFinished, activeIdVal, inputValue } = state;
+  const [showOverdueTasks, setShowOverdueTasks] = useState(false);
+
+  // Get overdue tasks
+  const overdueTasks = snapshot.live.filter(task => {
+    if (!task.deadline) return false;
+    return (Date.now() / 1000) > task.deadline;
+  });
 
   if (!expanded) {
     const liveTasks = snapshot.live;
@@ -267,7 +457,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
           Succeeded
         </Button>
         <button className="btn flex-grow-1 h-100 fs-4" onClick={expandDock}>
-        {firstTask.value}
+          {firstTask.value}
           <DeadlineBadge deadline={firstTask.deadline} countdown={true} className="ms-5" />
         </button>
         <Button variant="danger" className="h-100" onClick={() => finishTask(firstTask.id, "Failed")}>
@@ -285,23 +475,55 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
       <Col xs="auto">
         <Stack gap={2}>
           <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
-          <Button variant="secondary" onClick={() => setState({ ...state, showFinished: !showFinished })}>
-            {showFinished ? "Show Live Tasks" : "Show Finished Tasks"}
+          <Button 
+            variant="secondary" 
+            onClick={() => {
+              if (showOverdueTasks) {
+                setShowOverdueTasks(false);
+              } else if (showFinished) {
+                setState({ ...state, showFinished: false });
+                setShowOverdueTasks(true);
+              } else {
+                setShowOverdueTasks(true);
+              }
+            }}
+          >
+            {showOverdueTasks ? "Show Live Tasks" : overdueTasks.length > 0 ? `Show Overdue Tasks (${overdueTasks.length})` : "Show Live Tasks"}
           </Button>
+          {!showOverdueTasks && (
+            <Button 
+              variant="secondary" 
+              onClick={() => setState({ ...state, showFinished: !showFinished })}
+            >
+              {showFinished ? "Show Live Tasks" : "Show Finished Tasks"}
+            </Button>
+          )}
           <Button variant="secondary" onClick={logout}>Log Out</Button>
         </Stack>
       </Col>
       <Col>
         <Stack gap={2}>
-          <Form.Control
-            ref={taskInputRef}
-            placeholder="What needs to be done?"
-            value={inputValue}
-            onChange={e => setState({ ...state, inputValue: e.target.value })}
-            onKeyDown={e => e.key === "Enter" && submitTask()}
-            onFocus={() => setActiveTask(undefined)}
-          />
-          {!showFinished ? (
+          {!showOverdueTasks && !showFinished && (
+            <Form.Control
+              ref={taskInputRef}
+              placeholder="What needs to be done?"
+              value={inputValue}
+              onChange={e => setState({ ...state, inputValue: e.target.value })}
+              onKeyDown={e => e.key === "Enter" && submitTask()}
+              onFocus={() => setActiveTask(undefined)}
+            />
+          )}
+          {showOverdueTasks ? (
+            <OverdueTasksScreen
+              tasks={overdueTasks}
+              activeIdVal={activeIdVal}
+              taskInputRef={taskInputRef}
+              activeTaskInputRef={activeTaskInputRef}
+              setActiveTask={setActiveTask}
+              editTask={editTask}
+              finishTask={finishTask}
+            />
+          ) : !showFinished ? (
             snapshot.live.length > 0 ? (
               <ListGroup>
                 {snapshot.live.map((task, i) => {
@@ -396,46 +618,14 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                         )}
                       </Row>
                     </ListGroup.Item>
-                  )
+                  );
                 })}
               </ListGroup>
             ) : (
               <div className="text-muted fs-4 p-3">You have not created a task yet...</div>
             )
           ) : (
-            snapshot.finished.length > 0 ? (
-              <ListGroup>
-                {snapshot.finished.map((task, i) => (
-                  <ListGroup.Item key={task.id} className="p-2">
-                    <Row className="g-2 align-items-center">
-                      <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
-                        {i}|
-                      </Col>
-
-                      <Col xs="auto">
-                        <Badge
-                          bg={
-                            task.status === "Succeeded" ? "success" :
-                              task.status === "Failed" ? "danger" :
-                                "secondary"
-                          }
-                          style={{ width: '6rem' }}
-                        >
-                          {task.status.toUpperCase()}
-                        </Badge>
-                      </Col>
-
-                      <Col className="d-flex align-items-center">
-                        {task.value}
-                        <DeadlineBadge deadline={task.deadline} />
-                      </Col>
-                    </Row>
-                  </ListGroup.Item>
-                ))}
-              </ListGroup>
-            ) : (
-              <div className="text-muted fs-4 p-3">No finished tasks yet...</div>
-            )
+            <FinishedTasksScreen tasks={snapshot.finished} />
           )}
         </Stack>
       </Col>
@@ -499,6 +689,41 @@ function App() {
   const [expanded, setExpanded_raw] = useState(false);
   const [focused, setFocused] = useState(false);
   const [windowFocused, setWindowFocused_raw] = useState(false);
+
+  // Add effect to check for overdue tasks
+  useEffect(() => {
+    if (state.type !== "Connected" || expanded) return;
+
+    // Check if any live tasks are overdue
+    const hasOverdueTasks = state.snapshot.live.some(task => {
+      if (!task.deadline) return false;
+      return (Date.now() / 1000) > task.deadline;
+    });
+
+    // If there are overdue tasks, expand the window
+    if (hasOverdueTasks) {
+      expandDock();
+    }
+  }, [state, expanded]); // Re-run when state or expanded changes
+
+  // Add periodic check for overdue tasks
+  useEffect(() => {
+    if (state.type !== "Connected" || expanded) return;
+
+    // Check every second for overdue tasks
+    const interval = setInterval(() => {
+      const hasOverdueTasks = state.snapshot.live.some(task => {
+        if (!task.deadline) return false;
+        return (Date.now() / 1000) > task.deadline;
+      });
+
+      if (hasOverdueTasks) {
+        expandDock();
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [state.type, expanded]); // Only re-run when connection state or expanded state changes
 
   // Default server URL
   const defaultServerUrl = "http://localhost:8080/public/";
