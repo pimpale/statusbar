@@ -80,14 +80,55 @@ interface NotConnectedScreenProps {
 
 interface DeadlineBadgeProps {
   deadline: number | null;
+  countdown?: boolean;
+  className?: string;
 }
 
-const DeadlineBadge: React.FC<DeadlineBadgeProps> = ({ deadline }) => {
+const DeadlineBadge: React.FC<DeadlineBadgeProps> = ({ deadline, countdown = false, className = "" }) => {
+  const [currentTime, setCurrentTime] = useState(Date.now() / 1000);
+
+  useEffect(() => {
+    if (!countdown || !deadline) return;
+
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now() / 1000);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [countdown, deadline]);
+
   if (deadline === null) return null;
 
   const formatDeadline = (timestamp: number) => {
     const date = fromUnixTime(timestamp);
     const today = new Date();
+    
+    if (countdown) {
+      const diffSeconds = Math.floor(timestamp - currentTime);
+      if (diffSeconds < 0) {
+        return "Overdue";
+      }
+
+      const days = Math.floor(diffSeconds / (24 * 60 * 60));
+      const hours = Math.floor((diffSeconds % (24 * 60 * 60)) / (60 * 60));
+      const minutes = Math.floor((diffSeconds % (60 * 60)) / 60);
+      const seconds = diffSeconds % 60;
+
+      const daysPadded = days.toString().padStart(2, ' ');
+      const hoursPadded = hours.toString().padStart(2, ' ');
+      const minutesPadded = minutes.toString().padStart(2, ' ');
+      const secondsPadded = seconds.toString().padStart(2, ' ');
+
+      if (days > 0) {
+        return `${daysPadded}d ${hoursPadded}h left`;
+      } else if (hours > 0) {
+        return `${hoursPadded}h ${minutesPadded}m left`;
+      } else if (minutes > 0) {
+        return `${minutesPadded}m ${secondsPadded}s left`;
+      } else {
+        return `${secondsPadded}s left`;
+      }
+    }
     
     // If the date is today, only show the time
     if (format(date, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) {
@@ -117,12 +158,12 @@ const DeadlineBadge: React.FC<DeadlineBadgeProps> = ({ deadline }) => {
     return "success";  // green
   };
 
-  return (
-    <Badge bg={getBadgeVariant(deadline)} className="ms-2">
-      Due: {formatDeadline(deadline)}
+ return (
+    <Badge bg={getBadgeVariant(deadline)} className={className}>
+      {countdown ? <pre children={formatDeadline(deadline)} className="m-0" /> : formatDeadline(deadline)}
     </Badge>
   );
-};
+}
 
 // Add component definitions before App function
 const LoginScreen: React.FC<LoginScreenProps> = ({
@@ -224,9 +265,9 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
         <Button variant="success" className="h-100" onClick={() => finishTask(firstTask.id, "Succeeded")}>
           Succeeded
         </Button>
-        <button className="btn flex-grow-1 h-100" onClick={expandDock}>
-          {firstTask.value}
-          <DeadlineBadge deadline={firstTask.deadline} />
+        <button className="btn flex-grow-1 h-100 fs-4" onClick={expandDock}>
+        {firstTask.value}
+          <DeadlineBadge deadline={firstTask.deadline} countdown={true} className="ms-5" />
         </button>
         <Button variant="danger" className="h-100" onClick={() => finishTask(firstTask.id, "Failed")}>
           Failed
