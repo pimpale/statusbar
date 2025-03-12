@@ -129,6 +129,14 @@ interface TabTitleProps {
   tooltip?: string;
 }
 
+interface TooltipButtonProps {
+  variant?: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  tooltip?: string;
+  children: React.ReactNode;
+}
+
 const TabTitle: React.FC<TabTitleProps> = ({ title, disabled, tooltip }) => {
   if (!disabled || !tooltip) {
     return <>{title}</>;
@@ -144,6 +152,30 @@ const TabTitle: React.FC<TabTitleProps> = ({ title, disabled, tooltip }) => {
         <div style={{ display: 'inline-block' }}>{title}</div>
       </OverlayTrigger>
     </div>
+  );
+};
+
+const TooltipButton: React.FC<TooltipButtonProps> = ({ variant = "primary", onClick, disabled, tooltip, children }) => {
+  if (!disabled || !tooltip) {
+    return (
+      <Button variant={variant} onClick={onClick}>
+        {children}
+      </Button>
+    );
+  }
+
+  return (
+    <OverlayTrigger
+      placement="right"
+      overlay={<Tooltip>{tooltip}</Tooltip>}
+      trigger={['hover', 'focus']}
+    >
+      <div style={{ display: 'inline-block', cursor: 'not-allowed' }}>
+        <Button variant={variant} style={{ pointerEvents: 'none' }} disabled={true}>
+          {children}
+        </Button>
+      </div>
+    </OverlayTrigger>
   );
 };
 
@@ -561,7 +593,14 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
     <Row className="g-2 py-3">
       <Col xs="auto">
         <Stack gap={2}>
-          <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
+          <TooltipButton
+            variant="secondary"
+            onClick={overdueTasks.length > 0 ? undefined : collapseDock}
+            disabled={overdueTasks.length > 0}
+            tooltip={overdueTasks.length > 0 ? "Please resolve overdue tasks first" : undefined}
+          >
+            Collapse
+          </TooltipButton>
           <Button variant="secondary" onClick={logout}>Log Out</Button>
         </Stack>
       </Col>
