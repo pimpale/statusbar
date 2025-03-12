@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
-import { Button, Form, Container, Row, Col, Stack, Badge, ListGroup, InputGroup, Tabs, Tab } from 'react-bootstrap';
+import { Button, Form, Container, Row, Col, Stack, Badge, ListGroup, InputGroup, Tabs, Tab, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import {
@@ -93,11 +93,6 @@ interface OverdueTasksScreenProps {
     deadline: number | null;
     managed: string | null;
   }>;
-  activeIdVal?: [string, string, number | null];
-  taskInputRef: React.RefObject<HTMLInputElement>;
-  activeTaskInputRef: React.RefObject<HTMLInputElement>;
-  setActiveTask: (id?: string) => void;
-  editTask: (id: string, value: string, deadline: number | null) => void;
   finishTask: (id: string, status: TaskStatus) => void;
 }
 
@@ -127,6 +122,30 @@ interface LiveTasksScreenProps {
   state: Extract<AppState, { type: "Connected" }>;
   setState: (state: AppState) => void;
 }
+
+interface TabTitleProps {
+  title: string;
+  disabled?: boolean;
+  tooltip?: string;
+}
+
+const TabTitle: React.FC<TabTitleProps> = ({ title, disabled, tooltip }) => {
+  if (!disabled || !tooltip) {
+    return <>{title}</>;
+  }
+
+  return (
+    <div style={{ display: 'inline-block', cursor: 'not-allowed' }}>
+      <OverlayTrigger
+        placement="bottom"
+        overlay={<Tooltip>{tooltip}</Tooltip>}
+        trigger={['hover', 'focus']}
+      >
+        <div style={{ display: 'inline-block' }}>{title}</div>
+      </OverlayTrigger>
+    </div>
+  );
+};
 
 const DeadlineBadge: React.FC<DeadlineBadgeProps> = ({ deadline, countdown = false, className = "" }) => {
   const [currentTime, setCurrentTime] = useState(Date.now() / 1000);
@@ -277,11 +296,6 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
 
 const OverdueTasksScreen: React.FC<OverdueTasksScreenProps> = ({
   tasks,
-  activeIdVal,
-  taskInputRef,
-  activeTaskInputRef,
-  setActiveTask,
-  editTask,
   finishTask
 }) => {
   if (tasks.length === 0) {
@@ -290,105 +304,36 @@ const OverdueTasksScreen: React.FC<OverdueTasksScreenProps> = ({
 
   return (
     <ListGroup>
-      {tasks.map((task, i) => {
-        const isActive = activeIdVal && activeIdVal[0] === task.id;
-        return (
-          <ListGroup.Item key={task.id} className="p-2" onClick={isActive ? undefined : () => setActiveTask(task.id)}>
-            <Row className="g-2 align-items-center">
-              <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
-                {i}|
-              </Col>
-
-              {isActive ? (
-                <>
-                  <Col xs="auto">
-                    <Button variant="success" onClick={() => finishTask(task.id, "Succeeded")}>
-                      Task Succeeded
-                    </Button>
-                  </Col>
-
-                  <Col>
-                    <Form.Control
-                      ref={activeTaskInputRef}
-                      value={activeIdVal[1]}
-                      onChange={e => setActiveTask(task.id)}
-                      onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
-                    />
-                  </Col>
-                  <Col>
-                    <DatePicker
-                      showIcon
-                      selected={activeIdVal[2] !== null ? fromUnixTime(activeIdVal[2]) : null}
-                      onChange={(date: Date | null) => {
-                        const deadline = date ? getUnixTime(date) : null;
-                        editTask(task.id, task.value, deadline);
-                      }}
-                      onKeyDown={e => e.key === "Enter" && setActiveTask(undefined)}
-                      showTimeSelect
-                      timeFormat="h:mm aa"
-                      timeIntervals={15}
-                      dateFormat="MMM d, yyyy h:mm aa"
-                      minDate={new Date()}
-                      filterTime={(time) => {
-                        const selected = new Date(time);
-                        const now = new Date();
-                        if (format(selected, 'yyyy-MM-dd') === format(now, 'yyyy-MM-dd')) {
-                          return selected > now;
-                        }
-                        return true;
-                      }}
-                      isClearable
-                      placeholderText="Select date and time"
-                      className="form-control"
-                      wrapperClassName="w-100"
-                      icon={<i className="bi bi-calendar" style={{ fontSize: '0.8rem' }} />}
-                    />
-                  </Col>
-                  <Col xs="auto">
-                    <Button variant="dark" onClick={() => setActiveTask(undefined)}>
-                      Done
-                    </Button>
-                  </Col>
-                  <Col xs="auto">
-                    <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
-                      Task Failed
-                    </Button>
-                  </Col>
-                  <Col xs="auto">
-                    <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
-                      Task Obsoleted
-                    </Button>
-                  </Col>
-                </>
-              ) : (
-                <>
-                  <Col>
-                    {task.value}
-                  </Col>
-                  <Col>
-                    <DeadlineBadge deadline={task.deadline} countdown={true} />
-                  </Col>
-                  <Col xs="auto">
-                    <Button variant="success" onClick={() => finishTask(task.id, "Succeeded")}>
-                      Succeeded
-                    </Button>
-                  </Col>
-                  <Col xs="auto">
-                    <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
-                      Failed
-                    </Button>
-                  </Col>
-                  <Col xs="auto">
-                    <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
-                      Obsoleted
-                    </Button>
-                  </Col>
-                </>
-              )}
-            </Row>
-          </ListGroup.Item>
-        );
-      })}
+      {tasks.map((task, i) => (
+        <ListGroup.Item key={task.id} className="p-2">
+          <Row className="g-2 align-items-center">
+            <Col xs="auto" style={{ fontSize: '1.5rem', minWidth: '3rem' }}>
+              {i}|
+            </Col>
+            <Col>
+              {task.value}
+            </Col>
+            <Col>
+              <DeadlineBadge deadline={task.deadline} countdown={true} />
+            </Col>
+            <Col xs="auto">
+              <Button variant="success" onClick={() => finishTask(task.id, "Succeeded")}>
+                Succeeded
+              </Button>
+            </Col>
+            <Col xs="auto">
+              <Button variant="danger" onClick={() => finishTask(task.id, "Failed")}>
+                Failed
+              </Button>
+            </Col>
+            <Col xs="auto">
+              <Button variant="secondary" onClick={() => finishTask(task.id, "Obsoleted")}>
+                Obsoleted
+              </Button>
+            </Col>
+          </Row>
+        </ListGroup.Item>
+      ))}
     </ListGroup>
   );
 };
@@ -626,11 +571,29 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
             activeKey={viewType}
             onSelect={(k) => {
               if (k === ViewType.Live || k === ViewType.Overdue || k === ViewType.Finished) {
-                setState({ ...state, viewType: k });
+                // Only allow switching if there are no overdue tasks, or if switching to overdue tasks tab
+                if (overdueTasks.length === 0 || k === ViewType.Overdue) {
+                  setState({ ...state, viewType: k });
+                  if (k === ViewType.Live) {
+                    setTimeout(() => {
+                      taskInputRef.current?.focus();
+                    }, 0);
+                  }
+                }
               }
             }}
           >
-            <Tab eventKey={ViewType.Live} title="Live Tasks">
+            <Tab 
+              eventKey={ViewType.Live} 
+              title={
+                <TabTitle
+                  title="Live Tasks"
+                  disabled={overdueTasks.length > 0}
+                  tooltip={overdueTasks.length > 0 ? "Please resolve overdue tasks first" : undefined}
+                />
+              }
+              tabClassName={overdueTasks.length > 0 ? "text-muted" : ""}
+            >
               <Form.Control
                 ref={taskInputRef}
                 placeholder="What needs to be done?"
@@ -651,18 +614,27 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                 setState={setState}
               />
             </Tab>
-            <Tab eventKey={ViewType.Overdue} title={`Overdue Tasks (${overdueTasks.length})`}>
+            <Tab 
+              eventKey={ViewType.Overdue} 
+              title={`Overdue Tasks (${overdueTasks.length})`}
+              className="text-danger"
+            >
               <OverdueTasksScreen
                 tasks={overdueTasks}
-                activeIdVal={activeIdVal}
-                taskInputRef={taskInputRef}
-                activeTaskInputRef={activeTaskInputRef}
-                setActiveTask={setActiveTask}
-                editTask={editTask}
                 finishTask={finishTask}
               />
             </Tab>
-            <Tab eventKey={ViewType.Finished} title="Finished Tasks">
+            <Tab 
+              eventKey={ViewType.Finished} 
+              title={
+                <TabTitle
+                  title="Finished Tasks"
+                  disabled={overdueTasks.length > 0}
+                  tooltip={overdueTasks.length > 0 ? "Please resolve overdue tasks first" : undefined}
+                />
+              }
+              tabClassName={overdueTasks.length > 0 ? "text-muted" : ""}
+            >
               <FinishedTasksScreen tasks={snapshot.finished} />
             </Tab>
           </Tabs>
@@ -731,38 +703,58 @@ function App() {
 
   // Add effect to check for overdue tasks
   useEffect(() => {
-    if (state.type !== "Connected" || expanded) return;
+    if (state.type !== "Connected") return;
 
+    const connectedState = state as Extract<AppState, { type: "Connected" }>;
     // Check if any live tasks are overdue
-    const hasOverdueTasks = state.snapshot.live.some(task => {
+    const hasOverdueTasks = connectedState.snapshot.live.some(task => {
       if (!task.deadline) return false;
       return (Date.now() / 1000) > task.deadline;
     });
 
-    // If there are overdue tasks, expand the window
+    // If there are overdue tasks, expand the window and switch to overdue tab
     if (hasOverdueTasks) {
-      expandDock();
+      if (!expanded) {
+        expandDock();
+      }
+      // Only update view type if we're not already on the overdue tab
+      if (connectedState.viewType !== ViewType.Overdue) {
+        setState({
+          ...connectedState,
+          viewType: ViewType.Overdue
+        });
+      }
     }
-  }, [state, expanded]); // Re-run when state or expanded changes
+  }, [state.type === "Connected" ? (state as Extract<AppState, { type: "Connected" }>).snapshot.live : [], expanded]); // Only depend on live tasks and expanded state
 
   // Add periodic check for overdue tasks
   useEffect(() => {
-    if (state.type !== "Connected" || expanded) return;
+    if (state.type !== "Connected") return;
 
+    const connectedState = state as Extract<AppState, { type: "Connected" }>;
     // Check every second for overdue tasks
     const interval = setInterval(() => {
-      const hasOverdueTasks = state.snapshot.live.some(task => {
+      const hasOverdueTasks = connectedState.snapshot.live.some(task => {
         if (!task.deadline) return false;
         return (Date.now() / 1000) > task.deadline;
       });
 
       if (hasOverdueTasks) {
-        expandDock();
+        if (!expanded) {
+          expandDock();
+        }
+        // Only update view type if we're not already on the overdue tab
+        if (connectedState.viewType !== ViewType.Overdue) {
+          setState({
+            ...connectedState,
+            viewType: ViewType.Overdue
+          });
+        }
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [state.type, expanded]); // Only re-run when connection state or expanded state changes
+  }, [state.type, expanded, state.type === "Connected" ? (state as Extract<AppState, { type: "Connected" }>).snapshot.live : [], state.type === "Connected" ? (state as Extract<AppState, { type: "Connected" }>).viewType : ViewType.Live]); // Include all dependencies used in the interval
 
   // Default server URL
   const defaultServerUrl = "http://localhost:8080/public/";
