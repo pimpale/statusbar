@@ -22,7 +22,8 @@ import {
   parseRestoreCommand,
   parseMoveToEndCommand,
   parseMoveCommand,
-  parseReverseCommand
+  parseReverseCommand,
+  parseDueCommand
 } from "./utils/taskUtils";
 import {
   saveCache,
@@ -907,6 +908,19 @@ function App() {
               activeIdVal: undefined
             });
           }
+        }
+        return;
+
+      case "d": // set due date for first task
+        const newDeadline = parseDueCommand(inputValue);
+        if (newDeadline !== null && state.snapshot.live.length > 0) {
+          const task = state.snapshot.live[0];
+          editTask(task.id, task.value, newDeadline);
+          setState({
+            ...state,
+            inputValue: "",
+            activeIdVal: undefined
+          });
         }
         return;
 
