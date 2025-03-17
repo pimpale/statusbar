@@ -510,8 +510,10 @@ const FinishedTasksScreen: React.FC<FinishedTasksScreenProps> = ({
               </Badge>
             </Col>
 
-            <Col className="d-flex align-items-center">
+            <Col>
               {task.value}
+            </Col>
+            <Col>
               <DeadlineBadge deadline={task.deadline} />
             </Col>
           </Row>
@@ -542,6 +544,31 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
     if (!task.deadline) return false;
     return (Date.now() / 1000) > task.deadline;
   });
+  
+  // Track previous overdue tasks count to detect when last overdue task is finished
+  const prevOverdueTasksCountRef = useRef(overdueTasks.length);
+  
+  // Effect to switch to Live view when last overdue task is finished
+  useEffect(() => {
+    // If we were on the overdue tab and all overdue tasks are now gone
+    if (viewType === ViewType.Overdue && 
+        overdueTasks.length === 0 && 
+        prevOverdueTasksCountRef.current > 0) {
+      // Switch to live tasks view
+      setState({
+        ...state,
+        viewType: ViewType.Live
+      });
+      
+      // Focus the task input field
+      setTimeout(() => {
+        taskInputRef.current?.focus();
+      }, 0);
+    }
+    
+    // Update the reference for next render
+    prevOverdueTasksCountRef.current = overdueTasks.length;
+  }, [overdueTasks.length, viewType]);
 
   if (!expanded) {
     const liveTasks = snapshot.live;
