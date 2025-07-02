@@ -51,7 +51,7 @@ interface LoginScreenProps {
   passwordInputRef: React.RefObject<HTMLInputElement>;
   expandDock: () => void;
   collapseDock: () => void;
-  setState: (state: AppState) => void;
+  setState: (updater: (state: AppState) => AppState) => void;
   attemptLogin: (email: string, password: string) => void;
 }
 
@@ -62,7 +62,7 @@ interface ConnectedScreenProps {
   activeTaskInputRef: React.RefObject<HTMLInputElement>;
   expandDock: () => void;
   collapseDock: () => void;
-  setState: (state: AppState) => void;
+  setState: (updater: (state: AppState) => AppState) => void;
   logout: () => void;
   submitTask: () => void;
   finishTask: (id: string, status: TaskStatus) => void;
@@ -98,15 +98,13 @@ interface FinishedTasksScreenProps {
 }
 
 interface LiveTasksScreenProps {
-  tasks: LiveTask[];
   activeIdVal?: [string, string, number | null];
-  taskInputRef: React.RefObject<HTMLInputElement>;
   activeTaskInputRef: React.RefObject<HTMLInputElement>;
   setActiveTask: (id?: string) => void;
   editTask: (id: string, value: string, deadline: number | null) => void;
   finishTask: (id: string, status: TaskStatus) => void;
   state: Extract<AppState, { type: "Connected" }>;
-  setState: (state: AppState) => void;
+  setState: (updater: (state: AppState) => AppState) => void;
 }
 
 interface TabTitleProps {
@@ -282,7 +280,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
           value={email}
           onChange={e => {
             setEmail(e.target.value);
-            setState({ ...state, error: undefined });
+            setState(prevState => ({ ...prevState, error: undefined }));
           }}
           onKeyDown={e => e.key === "Enter" && passwordInputRef.current?.focus()}
         />
@@ -294,7 +292,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
             value={password}
             onChange={e => {
               setPassword(e.target.value);
-              setState({ ...state, error: undefined });
+              setState(prevState => ({ ...prevState, error: undefined }));
             }}
             onKeyDown={e => e.key === "Enter" && email && password ? attemptLogin(email, password) : null}
           />
@@ -357,9 +355,7 @@ const OverdueTasksScreen: React.FC<OverdueTasksScreenProps> = ({
 };
 
 const LiveTasksScreen: React.FC<LiveTasksScreenProps> = ({
-  tasks,
   activeIdVal,
-  taskInputRef,
   activeTaskInputRef,
   setActiveTask,
   editTask,
@@ -367,27 +363,27 @@ const LiveTasksScreen: React.FC<LiveTasksScreenProps> = ({
   state,
   setState
 }) => {
+  const tasks = state.snapshot.live;
   if (tasks.length === 0) {
     return <div className="text-muted fs-4 p-3">You have not created a task yet...</div>;
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (activeIdVal) {
-      const newState: Extract<AppState, { type: "Connected" }> = {
-        ...state,
+      console.log("handleInputChange", e.target.value);
+      setState(prevState => ({
+        ...prevState,
         activeIdVal: [activeIdVal[0], e.target.value, activeIdVal[2]]
-      };
-      setState(newState);
+      }));
     }
   };
 
   const handleDateChange = (date: Date | null, task: LiveTask) => {
     const deadline = date ? getUnixTime(date) : null;
-    const newState: Extract<AppState, { type: "Connected" }> = {
-      ...state,
+    setState(prevState => ({
+      ...prevState,
       activeIdVal: [task.id, task.value, deadline]
-    };
-    setState(newState);
+    }));
     editTask(task.id, task.value, deadline);
   };
 
@@ -544,28 +540,28 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
     if (!task.deadline) return false;
     return (Date.now() / 1000) > task.deadline;
   });
-  
+
   // Track previous overdue tasks count to detect when last overdue task is finished
   const prevOverdueTasksCountRef = useRef(overdueTasks.length);
-  
+
   // Effect to switch to Live view when last overdue task is finished
   useEffect(() => {
     // If we were on the overdue tab and all overdue tasks are now gone
-    if (viewType === ViewType.Overdue && 
-        overdueTasks.length === 0 && 
-        prevOverdueTasksCountRef.current > 0) {
+    if (viewType === ViewType.Overdue &&
+      overdueTasks.length === 0 &&
+      prevOverdueTasksCountRef.current > 0) {
       // Switch to live tasks view
-      setState({
-        ...state,
+      setState(prevState => ({
+        ...prevState,
         viewType: ViewType.Live
-      });
-      
+      }));
+
       // Focus the task input field
       setTimeout(() => {
         taskInputRef.current?.focus();
       }, 0);
     }
-    
+
     // Update the reference for next render
     prevOverdueTasksCountRef.current = overdueTasks.length;
   }, [overdueTasks.length, viewType]);
@@ -625,7 +621,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
               if (k === ViewType.Live || k === ViewType.Overdue || k === ViewType.Finished) {
                 // Only allow switching if there are no overdue tasks, or if switching to overdue tasks tab
                 if (overdueTasks.length === 0 || k === ViewType.Overdue) {
-                  setState({ ...state, viewType: k });
+                  setState(prevState => ({ ...prevState, viewType: k }));
                   if (k === ViewType.Live) {
                     setTimeout(() => {
                       taskInputRef.current?.focus();
@@ -635,8 +631,8 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
               }
             }}
           >
-            <Tab 
-              eventKey={ViewType.Live} 
+            <Tab
+              eventKey={ViewType.Live}
               title={
                 <TabTitle
                   title="Live Tasks"
@@ -650,14 +646,12 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                 ref={taskInputRef}
                 placeholder="What needs to be done?"
                 value={inputValue}
-                onChange={e => setState({ ...state, inputValue: e.target.value })}
+                onChange={e => setState(prevState => ({ ...prevState, inputValue: e.target.value }))}
                 onKeyDown={e => e.key === "Enter" && submitTask()}
                 onFocus={() => setActiveTask(undefined)}
               />
               <LiveTasksScreen
-                tasks={snapshot.live}
                 activeIdVal={activeIdVal}
-                taskInputRef={taskInputRef}
                 activeTaskInputRef={activeTaskInputRef}
                 setActiveTask={setActiveTask}
                 editTask={editTask}
@@ -666,8 +660,8 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                 setState={setState}
               />
             </Tab>
-            <Tab 
-              eventKey={ViewType.Overdue} 
+            <Tab
+              eventKey={ViewType.Overdue}
               title={`Overdue Tasks (${overdueTasks.length})`}
               className="text-danger"
             >
@@ -676,8 +670,8 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
                 finishTask={finishTask}
               />
             </Tab>
-            <Tab 
-              eventKey={ViewType.Finished} 
+            <Tab
+              eventKey={ViewType.Finished}
               title={
                 <TabTitle
                   title="Finished Tasks"
@@ -1111,23 +1105,23 @@ function App() {
         return;
 
       case "t": // toggle finished
-        setState({
-          ...state,
+        setState(prevState => ({
+          ...prevState,
           viewType: state.viewType === ViewType.Finished ? ViewType.Live : ViewType.Finished,
           inputValue: "",
           activeIdVal: undefined
-        });
+        }));
         return;
 
       case "s": // succeed first task
         if (state.snapshot.live.length > 0) {
           const task = state.snapshot.live[0];
           finishTask(task.id, "Succeeded");
-          setState({
-            ...state,
+          setState(prevState => ({
+            ...prevState,
             inputValue: "",
             activeIdVal: undefined
-          });
+          }));
         }
         return;
 
@@ -1135,11 +1129,11 @@ function App() {
         if (state.snapshot.live.length > 0) {
           const task = state.snapshot.live[0];
           finishTask(task.id, "Failed");
-          setState({
-            ...state,
+          setState(prevState => ({
+            ...prevState,
             inputValue: "",
             activeIdVal: undefined
-          });
+          }));
         }
         return;
 
@@ -1147,11 +1141,11 @@ function App() {
         if (state.snapshot.live.length > 0) {
           const task = state.snapshot.live[0];
           finishTask(task.id, "Obsoleted");
-          setState({
-            ...state,
+          setState(prevState => ({
+            ...prevState,
             inputValue: "",
             activeIdVal: undefined
-          });
+          }));
         }
         return;
 
@@ -1159,11 +1153,11 @@ function App() {
         const restoreIndex = parseRestoreCommand(inputValue);
         if (restoreIndex !== null && restoreIndex < state.snapshot.finished.length) {
           restoreFinishedTask(state.snapshot.finished[restoreIndex].id);
-          setState({
-            ...state,
+          setState(prevState => ({
+            ...prevState,
             inputValue: "",
             activeIdVal: undefined
-          });
+          }));
         }
         return;
 
@@ -1176,11 +1170,11 @@ function App() {
             state.snapshot.live[moveToEndIndex].id,
             state.snapshot.live[state.snapshot.live.length - 1].id
           );
-          setState({
-            ...state,
+          setState(prevState => ({
+            ...prevState,
             inputValue: "",
             activeIdVal: undefined
-          });
+          }));
         }
         return;
 
@@ -1193,11 +1187,11 @@ function App() {
             fromIndex < state.snapshot.live.length &&
             toIndex < state.snapshot.live.length) {
             moveTask(state.snapshot.live[fromIndex].id, state.snapshot.live[toIndex].id);
-            setState({
-              ...state,
+            setState(prevState => ({
+              ...prevState,
               inputValue: "",
               activeIdVal: undefined
-            });
+            }));
           }
         }
         return;
@@ -1211,11 +1205,11 @@ function App() {
             fromIndex < state.snapshot.live.length &&
             toIndex < state.snapshot.live.length) {
             reverseTask(state.snapshot.live[fromIndex].id, state.snapshot.live[toIndex].id);
-            setState({
-              ...state,
+            setState(prevState => ({
+              ...prevState,
               inputValue: "",
               activeIdVal: undefined
-            });
+            }));
           }
         }
         return;
@@ -1225,11 +1219,11 @@ function App() {
         if (newDeadline !== null && state.snapshot.live.length > 0) {
           const task = state.snapshot.live[0];
           editTask(task.id, task.value, newDeadline);
-          setState({
-            ...state,
+          setState(prevState => ({
+            ...prevState,
             inputValue: "",
             activeIdVal: undefined
-          });
+          }));
         }
         return;
 
@@ -1275,10 +1269,10 @@ function App() {
         deadline
       }
     })) {
-      setState({
-        ...state,
+      setState(prevState => ({
+        ...prevState,
         inputValue: "",
-      });
+      }));
     }
   };
 
@@ -1353,10 +1347,10 @@ function App() {
 
     if (!id) {
       // Just update UI state, no server interaction needed here
-      setState({
-        ...state,
+      setState(prevState => ({
+        ...prevState,
         activeIdVal: undefined
-      });
+      }));
       setTimeout(() => {
         taskInputRef.current?.focus();
       }, 0);
@@ -1368,10 +1362,10 @@ function App() {
     if (!task) return;
 
     // Just update local editing state, no server interaction needed here
-    setState({
-      ...state,
+    setState(prevState => ({
+      ...prevState,
       activeIdVal: [task.id, task.value, task.deadline]
-    });
+    }));
 
     setTimeout(() => {
       activeTaskInputRef.current?.focus();
