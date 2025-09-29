@@ -10,28 +10,28 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@fontsource/literata": "^5.2.6",
-    "@fontsource/permanent-marker": "^5.2.6",
+    "@fontsource/literata": "^5.2.8",
+    "@fontsource/permanent-marker": "^5.2.7",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@types/react-datepicker": "^7.0.0",
-    "bootstrap": "^5.3.7",
+    "bootstrap": "^5.3.8",
     "bootstrap-icons": "^1.13.1",
     "date-fns": "^4.1.0",
     "immutability-helper": "^3.1.1",
-    "react": "^19.1.0",
+    "react": "^19.1.1",
     "react-bootstrap": "^2.10.10",
-    "react-datepicker": "^8.4.0",
-    "react-dom": "^19.1.0",
-    "sass-embedded": "^1.89.2",
-    "zod": "^3.25.67"
+    "react-datepicker": "^8.7.0",
+    "react-dom": "^19.1.1",
+    "sass-embedded": "^1.93.2",
+    "zod": "^4.1.11"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.6.0",
-    "typescript": "~5.8.3",
-    "vite": "^7.0.0"
+    "@types/react": "^19.1.15",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.7"
   }
 }
