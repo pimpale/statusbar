@@ -53,6 +53,7 @@ interface LoginScreenProps {
   collapseDock: () => void;
   setState: (updater: (state: AppState) => AppState) => void;
   attemptLogin: (email: string, password: string) => void;
+  defaultServerUrl: string;
   serverApiUrl: string;
   setServerApiUrl: (url: string) => void;
 }
@@ -82,6 +83,7 @@ interface NotConnectedScreenProps {
   expanded: boolean;
   expandDock: () => void;
   connectWebsocket: (apiKey: string) => void;
+  logout: () => void;
 }
 
 interface DeadlineBadgeProps {
@@ -261,10 +263,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   collapseDock,
   setState,
   attemptLogin,
+  defaultServerUrl,
   serverApiUrl,
   setServerApiUrl
 }) => {
-  const defaultServerUrl = "http://localhost:8080/public/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [viewPassword, setViewPassword] = useState(false);
@@ -328,7 +330,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
               <Form.Control
                 type="text"
                 placeholder={defaultServerUrl}
-                value=""
+                value={serverApiUrl}
                 onChange={e => {
                   setServerApiUrl(e.target.value);
                   setState(prevState => ({ ...prevState, error: undefined }));
@@ -819,7 +821,8 @@ const NotConnectedScreen: React.FC<NotConnectedScreenProps> = ({
   state,
   expanded,
   expandDock,
-  connectWebsocket
+  connectWebsocket,
+  logout
 }) => {
   return (
     <Row className="g-2">
@@ -833,14 +836,24 @@ const NotConnectedScreen: React.FC<NotConnectedScreenProps> = ({
         </Button>
       </Col>
       {state.error && expanded && (
-        <Col xs="auto">
-          <Button
-            variant="secondary"
-            onClick={() => connectWebsocket(state.apiKey)}
-          >
-            Retry
-          </Button>
-        </Col>
+        <>
+          <Col xs="auto">
+            <Button
+              variant="secondary"
+              onClick={() => connectWebsocket(state.apiKey)}
+            >
+              Retry
+            </Button>
+          </Col>
+          <Col xs="auto">
+            <Button
+              variant="secondary"
+              onClick={logout}
+            >
+              Return to Login
+            </Button>
+          </Col>
+        </>
       )}
     </Row>
   );
@@ -967,8 +980,6 @@ function App() {
     state.type === "Connected" ? state.snapshot.live : []
   ]);
 
-  // Default server URL
-  const defaultServerUrl = "http://localhost:8080/public/";
   const [serverApiUrl, setServerApiUrl] = useState("");
 
   // Refs for inputs
@@ -1060,13 +1071,28 @@ function App() {
     }
   };
 
+  const defaultServerUrl = "http://localhost:8080/public/";
+
+  const getFormattedServerUrl = (rawUrl: string) => {
+    // if "" then replace with defaultServerUrl
+    if (rawUrl === "") {
+      return defaultServerUrl;
+    }
+    if (!rawUrl.endsWith("/")) {
+      return rawUrl + "/";
+    }
+    return rawUrl;
+  };
+
+
   // Handle login attempt
   const attemptLogin = async (email: string, password: string) => {
     if (state.type !== "NotLoggedIn") return;
 
+    const formattedServerApiUrl = getFormattedServerUrl(serverApiUrl);
     try {
       // Get server info first
-      const infoResponse = await fetch(`${serverApiUrl}info`);
+      const infoResponse = await fetch(`${formattedServerApiUrl}info`);
 
       if (!infoResponse.ok) {
         throw new Error(`${infoResponse.status}: ${await infoResponse.text()}`);
@@ -1102,16 +1128,13 @@ function App() {
 
       // Save to cache with default preferences, using the actual URL that was used
       saveCache({
-        serverApiUrl: serverApiUrl,
+        serverApiUrl: formattedServerApiUrl,
         apiKey: apiKeyData.key,
         preferences: {
           vocalEnabled: false,
           vocalFrequency: 300 // 5 minutes in seconds
         }
       });
-
-      // Update the serverApiUrl state to the actual URL used
-      setServerApiUrl(serverApiUrl);
 
       // Connect to websocket
       connectWebsocket(apiKeyData.key);
@@ -1136,7 +1159,7 @@ function App() {
 
     try {
       // Create WebSocket URL
-      let wsUrl = new URL(serverApiUrl);
+      let wsUrl = new URL(getFormattedServerUrl(serverApiUrl));
 
       // Convert http(s) to ws(s)
       if (wsUrl.protocol === 'https:') {
@@ -1556,6 +1579,7 @@ function App() {
   };
 
   const renderContent = () => {
+
     if (state.type === "NotLoggedIn") {
       return (
         <LoginScreen
@@ -1569,6 +1593,7 @@ function App() {
           attemptLogin={attemptLogin}
           serverApiUrl={serverApiUrl}
           setServerApiUrl={setServerApiUrl}
+          defaultServerUrl={defaultServerUrl}
         />
       );
     }
@@ -1608,6 +1633,7 @@ function App() {
           expanded={expanded}
           expandDock={expandDock}
           connectWebsocket={connectWebsocket}
+          logout={logout}
         />
       );
     }
