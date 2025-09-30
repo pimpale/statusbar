@@ -53,6 +53,8 @@ interface LoginScreenProps {
   collapseDock: () => void;
   setState: (updater: (state: AppState) => AppState) => void;
   attemptLogin: (email: string, password: string) => void;
+  serverApiUrl: string;
+  setServerApiUrl: (url: string) => void;
 }
 
 interface ConnectedScreenProps {
@@ -258,8 +260,11 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   expandDock,
   collapseDock,
   setState,
-  attemptLogin
+  attemptLogin,
+  serverApiUrl,
+  setServerApiUrl
 }) => {
+  const defaultServerUrl = "http://localhost:8080/public/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [viewPassword, setViewPassword] = useState(false);
@@ -273,45 +278,70 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   }
 
   return (
-    <div className="d-flex py-3 gap-2">
-      <Stack gap={2}>
-        <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
-      </Stack>
-      <Stack gap={2} className="flex-grow-1">
-        <Form.Control
-          ref={emailInputRef}
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={e => {
-            setEmail(e.target.value);
-            setState(prevState => ({ ...prevState, error: undefined }));
-          }}
-          onKeyDown={e => e.key === "Enter" && passwordInputRef.current?.focus()}
-        />
-        <InputGroup>
-          <Form.Control
-            ref={passwordInputRef}
-            type={viewPassword ? "text" : "password"}
-            placeholder="Password"
-            value={password}
-            onChange={e => {
-              setPassword(e.target.value);
-              setState(prevState => ({ ...prevState, error: undefined }));
-            }}
-            onKeyDown={e => e.key === "Enter" && email && password ? attemptLogin(email, password) : null}
-          />
-          <Button
-            variant="outline-secondary"
-            onClick={() => setViewPassword(!viewPassword)}
-          >
-            <i className={viewPassword ? "bi bi-eye-slash-fill" : "bi bi-eye-fill"}></i>
-          </Button>
-        </InputGroup>
-        <Button variant="primary" onClick={() => attemptLogin(email, password)}>Submit</Button>
-        {state.error && <div className="text-danger">{state.error}</div>}
-      </Stack>
-    </div>
+    <Row className="g-2 py-3">
+      <Col xs="auto">
+        <Stack gap={2}>
+          <Button variant="secondary" onClick={collapseDock}>Collapse</Button>
+        </Stack>
+      </Col>
+      <Col>
+        <Stack gap={2}>
+          <h5>Login</h5>
+          <Form>
+            <Form.Group className="mb-2">
+              <Form.Label>Email</Form.Label>
+              <Form.Control
+                ref={emailInputRef}
+                type="email"
+                value={email}
+                onChange={e => {
+                  setEmail(e.target.value);
+                  setState(prevState => ({ ...prevState, error: undefined }));
+                }}
+                onKeyDown={e => e.key === "Enter" && passwordInputRef.current?.focus()}
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-2">
+              <Form.Label>Password</Form.Label>
+              <InputGroup>
+                <Form.Control
+                  ref={passwordInputRef}
+                  type={viewPassword ? "text" : "password"}
+                  value={password}
+                  onChange={e => {
+                    setPassword(e.target.value);
+                    setState(prevState => ({ ...prevState, error: undefined }));
+                  }}
+                  onKeyDown={e => e.key === "Enter" && email && password ? attemptLogin(email, password) : null}
+                />
+                <Button
+                  variant="outline-secondary"
+                  onClick={() => setViewPassword(!viewPassword)}
+                >
+                  <i className={viewPassword ? "bi bi-eye-slash-fill" : "bi bi-eye-fill"}></i>
+                </Button>
+              </InputGroup>
+            </Form.Group>
+            <details className="mb-2">
+              <summary style={{ cursor: 'pointer', userSelect: 'none' }}>Server API URL</summary>
+              <Form.Control
+                type="text"
+                placeholder={defaultServerUrl}
+                value=""
+                onChange={e => {
+                  setServerApiUrl(e.target.value);
+                  setState(prevState => ({ ...prevState, error: undefined }));
+                }}
+                className="mt-2"
+              />
+            </details>
+            <Button variant="primary" onClick={() => attemptLogin(email, password)}>Submit</Button>
+            {state.error && <div className="text-danger">{state.error}</div>}
+          </Form>
+        </Stack>
+      </Col>
+    </Row>
   );
 };
 
@@ -529,7 +559,7 @@ const PreferencesScreen: React.FC<PreferencesScreenProps> = ({
   setState
 }) => {
   const { preferences } = state;
-  
+
   const handleVocalEnabledChange = (enabled: boolean) => {
     setState(prevState => {
       if (prevState.type !== "Connected") return prevState;
@@ -562,7 +592,7 @@ const PreferencesScreen: React.FC<PreferencesScreenProps> = ({
   return (
     <Container className="py-3">
       <h4>Vocal Reminders</h4>
-      <Form.Check 
+      <Form.Check
         type="checkbox"
         id="vocal-enabled"
         label="Enable vocal reminders (requires espeak-ng to be installed)"
@@ -885,7 +915,7 @@ function App() {
   // Save preferences to cache when they change
   useEffect(() => {
     if (state.type !== "Connected") return;
-    
+
     const cache = loadCache();
     if (cache) {
       saveCache({
@@ -898,23 +928,23 @@ function App() {
   // Vocal reminders
   useEffect(() => {
     if (state.type !== "Connected") return;
-    
+
     const connectedState = state as Extract<AppState, { type: "Connected" }>;
-    
+
     if (!connectedState.preferences.vocalEnabled) return;
-    
+
     const speakTopTask = async () => {
       const topTask = connectedState.snapshot.live[0];
       if (topTask) {
         // Debounce: only speak if at least 5 seconds have passed since last message
         const now = Date.now();
         const timeSinceLastSpeak = now - lastVocalMessageTimeRef.current;
-        
+
         if (timeSinceLastSpeak < 5000) {
           console.log("Skipping vocal reminder (debounced)");
           return;
         }
-        
+
         try {
           await invoke("speak_message", { message: topTask.value });
           lastVocalMessageTimeRef.current = now;
@@ -923,13 +953,13 @@ function App() {
         }
       }
     };
-    
+
     // Speak immediately when enabled
     speakTopTask();
-    
+
     // Set up interval for periodic reminders
     const interval = setInterval(speakTopTask, connectedState.preferences.vocalFrequency * 1000);
-    
+
     return () => clearInterval(interval);
   }, [
     state.type === "Connected" ? state.preferences.vocalEnabled : false,
@@ -939,14 +969,14 @@ function App() {
 
   // Default server URL
   const defaultServerUrl = "http://localhost:8080/public/";
-  const [serverApiUrl, setServerApiUrl] = useState(defaultServerUrl);
+  const [serverApiUrl, setServerApiUrl] = useState("");
 
   // Refs for inputs
   const emailInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
   const taskInputRef = useRef<HTMLInputElement>(null);
   const activeTaskInputRef = useRef<HTMLInputElement>(null);
-  
+
   // Ref to track last vocal message time (for debouncing)
   const lastVocalMessageTimeRef = useRef<number>(0);
 
@@ -1070,15 +1100,18 @@ function App() {
         throw new Error("No API key returned");
       }
 
-      // Save to cache with default preferences
+      // Save to cache with default preferences, using the actual URL that was used
       saveCache({
-        serverApiUrl,
+        serverApiUrl: serverApiUrl,
         apiKey: apiKeyData.key,
         preferences: {
           vocalEnabled: false,
           vocalFrequency: 300 // 5 minutes in seconds
         }
       });
+
+      // Update the serverApiUrl state to the actual URL used
+      setServerApiUrl(serverApiUrl);
 
       // Connect to websocket
       connectWebsocket(apiKeyData.key);
@@ -1534,6 +1567,8 @@ function App() {
           collapseDock={collapseDock}
           setState={setState}
           attemptLogin={attemptLogin}
+          serverApiUrl={serverApiUrl}
+          setServerApiUrl={setServerApiUrl}
         />
       );
     }
