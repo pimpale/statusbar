@@ -23,32 +23,42 @@ export const StateSnapshotSchema = z.object({
 });
 export type StateSnapshot = z.infer<typeof StateSnapshotSchema>;
 
+export interface Preferences {
+    // whether to periodically speak aloud the topmost live task
+    vocalEnabled: boolean;
+    // delay in seconds after a vocal message is sent before it is sent again
+    vocalFrequency: number;
+}
+
 // Cache types
 export interface TodosCache {
-  serverApiUrl: string;
-  apiKey: string;
+    preferences: Preferences;
+    serverApiUrl: string;
+    apiKey: string;
 }
 
 // View type enum
 export enum ViewType {
-  Live = "live",
-  Finished = "finished",
-  Overdue = "overdue"
+    Live = "live",
+    Finished = "finished",
+    Overdue = "overdue",
+    Preferences = "preferences"
 }
 
 // App state types
 export type AppState =
-  | { type: "NotLoggedIn"; error?: string }
-  | { type: "Restored"; apiKey: string }
-  | { type: "NotConnected"; apiKey: string; error?: string }
-  | {
-      type: "Connected";
-      apiKey: string;
-      inputValue: string;
-      activeIdVal?: [id: string, value: string, deadline: number | null];
-      snapshot: StateSnapshot;
-      viewType: ViewType;
-      sessionId: string;
+    | { type: "NotLoggedIn"; error?: string }
+    | { type: "Restored"; apiKey: string }
+    | { type: "NotConnected"; apiKey: string; error?: string }
+    | {
+        type: "Connected";
+        apiKey: string;
+        inputValue: string;
+        activeIdVal?: [id: string, value: string, deadline: number | null];
+        snapshot: StateSnapshot;
+        viewType: ViewType;
+        sessionId: string;
+        preferences: Preferences;
     };
 
 // WebSocket operation kinds

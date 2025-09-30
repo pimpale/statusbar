@@ -97,6 +97,11 @@ interface FinishedTasksScreenProps {
   tasks: FinishedTask[];
 }
 
+interface PreferencesScreenProps {
+  state: Extract<AppState, { type: "Connected" }>;
+  setState: (updater: (state: AppState) => AppState) => void;
+}
+
 interface LiveTasksScreenProps {
   activeIdVal?: [string, string, number | null];
   activeTaskInputRef: React.RefObject<HTMLInputElement>;
@@ -519,6 +524,68 @@ const FinishedTasksScreen: React.FC<FinishedTasksScreenProps> = ({
   );
 };
 
+const PreferencesScreen: React.FC<PreferencesScreenProps> = ({
+  state,
+  setState
+}) => {
+  const { preferences } = state;
+  
+  const handleVocalEnabledChange = (enabled: boolean) => {
+    setState(prevState => {
+      if (prevState.type !== "Connected") return prevState;
+      return {
+        ...prevState,
+        preferences: {
+          ...prevState.preferences,
+          vocalEnabled: enabled
+        }
+      };
+    });
+  };
+
+  const handleVocalFrequencyChange = (frequency: number) => {
+    setState(prevState => {
+      if (prevState.type !== "Connected") return prevState;
+      return {
+        ...prevState,
+        preferences: {
+          ...prevState.preferences,
+          vocalFrequency: frequency
+        }
+      };
+    });
+  };
+
+  // Convert frequency in seconds to minutes for display
+  const frequencyInMinutes = Math.round(preferences.vocalFrequency / 60);
+
+  return (
+    <Container className="py-3">
+      <h4>Vocal Reminders</h4>
+      <Form.Check 
+        type="checkbox"
+        id="vocal-enabled"
+        label="Enable vocal reminders (requires espeak-ng to be installed)"
+        checked={preferences.vocalEnabled}
+        onChange={(e) => handleVocalEnabledChange(e.target.checked)}
+        className="mb-3"
+      />
+      <Form.Group>
+        <Form.Label>
+          Frequency: {frequencyInMinutes} minute{frequencyInMinutes !== 1 ? 's' : ''}
+        </Form.Label>
+        <Form.Range
+          min={1}
+          max={60}
+          value={frequencyInMinutes}
+          onChange={(e) => handleVocalFrequencyChange(parseInt(e.target.value) * 60)}
+          disabled={!preferences.vocalEnabled}
+        />
+      </Form.Group>
+    </Container>
+  );
+};
+
 const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
   state,
   expanded,
@@ -618,7 +685,7 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
           <Tabs
             activeKey={viewType}
             onSelect={(k) => {
-              if (k === ViewType.Live || k === ViewType.Overdue || k === ViewType.Finished) {
+              if (k === ViewType.Live || k === ViewType.Overdue || k === ViewType.Finished || k === ViewType.Preferences) {
                 // Only allow switching if there are no overdue tasks, or if switching to overdue tasks tab
                 if (overdueTasks.length === 0 || k === ViewType.Overdue) {
                   setState(prevState => ({ ...prevState, viewType: k }));
@@ -682,6 +749,19 @@ const ConnectedScreen: React.FC<ConnectedScreenProps> = ({
               tabClassName={overdueTasks.length > 0 ? "text-muted" : ""}
             >
               <FinishedTasksScreen tasks={snapshot.finished} />
+            </Tab>
+            <Tab
+              eventKey={ViewType.Preferences}
+              title={
+                <TabTitle
+                  title="Preferences"
+                  disabled={overdueTasks.length > 0}
+                  tooltip={overdueTasks.length > 0 ? "Please resolve overdue tasks first" : undefined}
+                />
+              }
+              tabClassName={overdueTasks.length > 0 ? "text-muted" : ""}
+            >
+              <PreferencesScreen state={state} setState={setState} />
             </Tab>
           </Tabs>
         </Stack>
@@ -802,6 +882,61 @@ function App() {
     return () => clearInterval(interval);
   }, [state.type, expanded, state.type === "Connected" ? (state as Extract<AppState, { type: "Connected" }>).snapshot.live : [], state.type === "Connected" ? (state as Extract<AppState, { type: "Connected" }>).viewType : ViewType.Live]); // Include all dependencies used in the interval
 
+  // Save preferences to cache when they change
+  useEffect(() => {
+    if (state.type !== "Connected") return;
+    
+    const cache = loadCache();
+    if (cache) {
+      saveCache({
+        ...cache,
+        preferences: state.preferences
+      });
+    }
+  }, [state.type === "Connected" ? state.preferences : undefined]);
+
+  // Vocal reminders
+  useEffect(() => {
+    if (state.type !== "Connected") return;
+    
+    const connectedState = state as Extract<AppState, { type: "Connected" }>;
+    
+    if (!connectedState.preferences.vocalEnabled) return;
+    
+    const speakTopTask = async () => {
+      const topTask = connectedState.snapshot.live[0];
+      if (topTask) {
+        // Debounce: only speak if at least 5 seconds have passed since last message
+        const now = Date.now();
+        const timeSinceLastSpeak = now - lastVocalMessageTimeRef.current;
+        
+        if (timeSinceLastSpeak < 5000) {
+          console.log("Skipping vocal reminder (debounced)");
+          return;
+        }
+        
+        try {
+          await invoke("speak_message", { message: topTask.value });
+          lastVocalMessageTimeRef.current = now;
+        } catch (error) {
+          console.error("Failed to speak task:", error);
+        }
+      }
+    };
+    
+    // Speak immediately when enabled
+    speakTopTask();
+    
+    // Set up interval for periodic reminders
+    const interval = setInterval(speakTopTask, connectedState.preferences.vocalFrequency * 1000);
+    
+    return () => clearInterval(interval);
+  }, [
+    state.type === "Connected" ? state.preferences.vocalEnabled : false,
+    state.type === "Connected" ? state.preferences.vocalFrequency : 0,
+    state.type === "Connected" ? state.snapshot.live : []
+  ]);
+
   // Default server URL
   const defaultServerUrl = "http://localhost:8080/public/";
   const [serverApiUrl, setServerApiUrl] = useState(defaultServerUrl);
@@ -811,6 +946,9 @@ function App() {
   const passwordInputRef = useRef<HTMLInputElement>(null);
   const taskInputRef = useRef<HTMLInputElement>(null);
   const activeTaskInputRef = useRef<HTMLInputElement>(null);
+  
+  // Ref to track last vocal message time (for debouncing)
+  const lastVocalMessageTimeRef = useRef<number>(0);
 
   // Create the new setWindowFocused function that handles the Tauri invoke
   const setWindowFocused = async (newState: boolean) => {
@@ -932,10 +1070,14 @@ function App() {
         throw new Error("No API key returned");
       }
 
-      // Save to cache
+      // Save to cache with default preferences
       saveCache({
         serverApiUrl,
-        apiKey: apiKeyData.key
+        apiKey: apiKeyData.key,
+        preferences: {
+          vocalEnabled: false,
+          vocalFrequency: 300 // 5 minutes in seconds
+        }
       });
 
       // Connect to websocket
@@ -983,6 +1125,13 @@ function App() {
       ws.addEventListener('open', () => {
         console.log('WebSocket connection established');
 
+        // Load preferences from cache or use defaults
+        const cache = loadCache();
+        const preferences = cache?.preferences || {
+          vocalEnabled: false,
+          vocalFrequency: 300 // 5 minutes in seconds
+        };
+
         setState({
           type: "Connected",
           apiKey,
@@ -994,6 +1143,7 @@ function App() {
           },
           viewType: ViewType.Live,
           sessionId,
+          preferences,
         });
 
         // Focus the input
@@ -1022,7 +1172,7 @@ function App() {
           });
         } catch (error) {
           if (error instanceof z.ZodError) {
-            console.error('WebSocket message validation error:', error.errors);
+            console.error('WebSocket message validation error:', error.issues);
             console.error('Original message:', JSON.parse(event.data));
           } else {
             console.error('WebSocket message error:', error);

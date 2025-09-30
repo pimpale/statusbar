@@ -43,6 +43,15 @@ async fn set_expand_state(expanded: bool, window: tauri::Window) -> Result<(), S
         })
 }
 
+#[tauri::command]
+async fn speak_message(message: String) -> Result<(), String> {
+    std::process::Command::new("espeak-ng")
+        .arg(message)
+        .spawn()
+        .map_err(|e| format!("Failed to execute espeak-ng: {}", e))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -62,7 +71,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![set_focus_state, set_expand_state,])
+        .invoke_handler(tauri::generate_handler![set_focus_state, set_expand_state, speak_message])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
